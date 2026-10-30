@@ -117,6 +117,8 @@ location / {
 }
 ```
 
+No cache rules are needed: scripts and styles are served under content-hashed URLs (`/s/<hash>/app.js`) with long-lived `immutable` caching, the page itself is always revalidated, and API responses are `no-store` — so after an upgrade browsers and Cloudflare pick up the new version on the next load.
+
 Serve it over HTTPS if it's reachable from the internet — the session cookie is marked `Secure` automatically when it is.
 
 ## Build from source

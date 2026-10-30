@@ -155,15 +155,15 @@ func (a *App) routes() http.Handler {
 		writeJSON(w, map[string]string{"status": "ok", "version": version})
 	})
 
-	static, _ := fs.Sub(webFS, "web")
-	files := http.FileServer(http.FS(static))
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			w.Header().Set("Cache-Control", "no-cache")
-		}
-		files.ServeHTTP(w, r)
-	})
-	return securityHeaders(mux)
+	files, _ := fs.Sub(webFS, "web")
+	site, err := newStaticSite(files)
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.HandleFunc("GET /s/{hash}/{file...}", site.serveAsset)
+	mux.HandleFunc("GET /{$}", site.serveIndex)
+	mux.HandleFunc("GET /index.html", site.serveIndex)
+	return securityHeaders(noStore(mux))
 }
 
 func securityHeaders(h http.Handler) http.Handler {
