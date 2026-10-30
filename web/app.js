@@ -37,7 +37,9 @@ const I18N = {
     visibility: '谁可以使用', everyone: '所有用户', selectedUsers: '指定用户', usersCount: n => `${n} 位用户`,
     pickUsers: '勾选可以使用的用户', settings: '设置', mine: '我的',
     myModels: '我的模型', myModelsSub: '添加你自己的 API Key，只有你能看到和使用，用量不计入额度。', noOwn: '还没有添加自己的模型服务',
-    allowUserKeys: '允许用户添加自己的 API Key', allowUserKeysSub: '开启后，用户可以在「我的模型」中接入自己的服务，只对本人可见。',
+    keyMode: '用户自己的 API Key', keyModeSub: '用户可以在「我的模型」中接入自己的服务，只对本人可见，用量不计入额度。',
+    modeOff: '不允许', modeOfficial: '仅官方服务（OpenAI / Claude / DeepSeek）', modeCustom: '允许自定义 API 地址',
+    providerPreset: '服务商', blockedMode: '当前设置下不可用', privateNeedsCustom: '仅在「允许自定义 API 地址」时生效。',
     allowPrivate: '允许个人服务访问内网地址', allowPrivateSub: '默认禁止，防止用户借服务器访问本机或内网。需要接入内网的 Ollama 等服务时再开启。',
     keysEncrypted: 'API Key 已加密存储（VSCHAT_SECRET 已设置）', keysPlain: 'API Key 以明文存储。设置环境变量 VSCHAT_SECRET 可加密保存。',
   },
@@ -76,7 +78,9 @@ const I18N = {
     visibility: 'Who can use it', everyone: 'Everyone', selectedUsers: 'Selected users', usersCount: n => `${n} users`,
     pickUsers: 'Tick the users who may use it', settings: 'Settings', mine: 'Mine',
     myModels: 'My models', myModelsSub: 'Add your own API keys. Only you can see and use them, and they don’t count toward your limit.', noOwn: 'No personal providers yet',
-    allowUserKeys: 'Let users add their own API keys', allowUserKeysSub: 'Users can connect their own providers under “My models”, visible only to them.',
+    keyMode: 'Users’ own API keys', keyModeSub: 'Users can connect their own providers under “My models”, visible only to them and not counted against their limit.',
+    modeOff: 'Not allowed', modeOfficial: 'Official providers only (OpenAI / Claude / DeepSeek)', modeCustom: 'Allow custom API URLs',
+    providerPreset: 'Provider', blockedMode: 'Not allowed by current settings', privateNeedsCustom: 'Only applies when custom API URLs are allowed.',
     allowPrivate: 'Let personal providers reach private networks', allowPrivateSub: 'Off by default so users can’t use the server to reach localhost or your LAN. Turn on for a LAN Ollama and the like.',
     keysEncrypted: 'API keys are encrypted at rest (VSCHAT_SECRET is set)', keysPlain: 'API keys are stored in plain text. Set VSCHAT_SECRET to encrypt them.',
   },
@@ -232,7 +236,7 @@ function renderMarkdown(el, text, live) {
 /* ================= state ================= */
 const S = {
   me: null, monthTokens: 0, models: [], chats: [], chatId: null, messages: [],
-  model: store.get('model', ''), attachments: [], controller: null, search: '', userKeys: false,
+  model: store.get('model', ''), attachments: [], controller: null, search: '', userKeys: 'off', presets: [],
 };
 const modelById = id => S.models.find(m => m.id === id);
 
@@ -259,7 +263,7 @@ $('#login-form').addEventListener('submit', async e => {
 async function boot() {
   let me;
   try { me = await api('GET', '/me'); } catch { return; }
-  S.me = me.user; S.monthTokens = me.month_tokens; S.userKeys = me.user_keys;
+  S.me = me.user; S.monthTokens = me.month_tokens; S.userKeys = me.user_keys; S.presets = me.key_presets || [];
   $('#login').hidden = true;
   $('#app').hidden = false;
   $('#user-name').textContent = S.me.username;
@@ -797,7 +801,7 @@ $('#user-btn').onclick = () => {
     <div class="menu-item">${icon('globe')}<span>${esc(t('language'))}</span><span class="seg" data-seg="lang">
       <button data-v="zh" class="${lang === 'zh' ? 'on' : ''}">中文</button><button data-v="en" class="${lang === 'en' ? 'on' : ''}">EN</button></span></div>
     <div class="menu-sep"></div>
-    ${S.userKeys ? `<button class="menu-item" data-act="mine">${icon('cube')}<span>${esc(t('myModels'))}</span></button>` : ''}
+    ${S.userKeys !== 'off' ? `<button class="menu-item" data-act="mine">${icon('cube')}<span>${esc(t('myModels'))}</span></button>` : ''}
     <button class="menu-item" data-act="password">${icon('key')}<span>${esc(t('changePassword'))}</span></button>
     ${S.me.is_admin ? `<button class="menu-item" data-act="admin">${icon('shield')}<span>${esc(t('admin'))}</span></button>` : ''}
     <div class="menu-sep"></div>
@@ -921,6 +925,7 @@ function providerCards(ps, scope) {
     <div class="prov-info">
       <div class="prov-name">${esc(p.name)}<span class="badge">${esc(p.kind === 'anthropic' ? 'Anthropic' : 'OpenAI API')}</span>
         ${scope.shared && p.visibility === 'users' ? `<span class="badge accent">${esc(t('usersCount', p.user_ids.length))}</span>` : ''}
+        ${p.blocked ? `<span class="badge danger">${esc(t('blockedMode'))}</span>` : ''}
         ${p.key_error ? `<span class="badge danger" title="${esc(p.key_error)}">${esc(t('noKey'))}</span>` : p.has_key ? '' : `<span class="badge danger">${esc(t('noKey'))}</span>`}</div>
       <div class="prov-sub">${esc(t('modelCount', p.models.length))} · ${esc(p.base_url || (p.kind === 'anthropic' ? 'api.anthropic.com' : 'api.openai.com'))}</div>
     </div>
@@ -957,13 +962,20 @@ function openMyModels() {
 }
 
 function providerForm(p, scope, users, done) {
+  // In "official" mode a personal provider is picked from the presets; kind and
+  // base URL follow the preset and can't be edited.
+  const official = !scope.shared && S.userKeys === 'official';
   const form = h(`<form style="display:flex;flex-direction:column;gap:14px">
     <div class="row">
       <label class="field"><span>${esc(t('name'))}</span><input name="name" required></label>
-      <label class="field"><span>${esc(t('kind'))}</span><select name="kind">
-        <option value="openai">${esc(t('kindOpenAI'))}</option><option value="anthropic">${esc(t('kindAnthropic'))}</option></select></label>
+      ${official ? `<label class="field"><span>${esc(t('providerPreset'))}</span><select name="preset">
+          ${S.presets.map(pr => `<option value="${esc(pr.id)}">${esc(pr.name)}</option>`).join('')}</select></label>
+        <input type="hidden" name="kind">`
+      : `<label class="field"><span>${esc(t('kind'))}</span><select name="kind">
+        <option value="openai">${esc(t('kindOpenAI'))}</option><option value="anthropic">${esc(t('kindAnthropic'))}</option></select></label>`}
     </div>
-    <label class="field"><span>${esc(t('baseURL'))}</span><input name="base_url" placeholder="https://api.openai.com/v1"></label>
+    ${official ? '<input type="hidden" name="base_url">'
+      : `<label class="field"><span>${esc(t('baseURL'))}</span><input name="base_url" placeholder="https://api.openai.com/v1"></label>`}
     <label class="field"><span>${esc(t('apiKey'))}</span><input name="api_key" type="password" autocomplete="off"
       placeholder="${p?.has_key ? esc(t('keySet', p.key_hint || '••••')) : esc(t('keyNotSet'))}"></label>
     <label class="field"><span>${esc(t('models'))} <small>${esc(t('modelsHint'))}</small></span><textarea name="models" rows="5"></textarea></label>
@@ -979,8 +991,22 @@ function providerForm(p, scope, users, done) {
   form.base_url.value = p?.base_url || '';
   form.models.value = (p?.models || []).join('\n');
   form.enabled.checked = p ? p.enabled : true;
-  const syncPlaceholder = () => { form.base_url.placeholder = form.kind.value === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'; };
-  form.kind.onchange = syncPlaceholder; syncPlaceholder();
+  if (official) {
+    const norm = u => (u || '').replace(/\/+$/, '');
+    const cur = p && S.presets.find(pr => pr.kind === p.kind && (norm(p.base_url) === pr.base_url || (!p.base_url && pr.id === p.kind)));
+    form.preset.value = cur?.id || S.presets[0]?.id;
+    let lastName = '';
+    const syncPreset = () => {
+      const pr = S.presets.find(x => x.id === form.preset.value);
+      form.kind.value = pr.kind; form.base_url.value = pr.base_url;
+      if (!form.name.value || form.name.value === lastName) form.name.value = pr.name;
+      lastName = pr.name;
+    };
+    form.preset.onchange = syncPreset; syncPreset();
+  } else {
+    const syncPlaceholder = () => { form.base_url.placeholder = form.kind.value === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'; };
+    form.kind.onchange = syncPlaceholder; syncPlaceholder();
+  }
   const userBox = form.querySelector('[data-users]');
   if (userBox) {
     const allowed = new Set(p?.user_ids || []);
@@ -1038,18 +1064,26 @@ function providerForm(p, scope, users, done) {
 
 async function adminSettings(body) {
   const st = await api('GET', '/admin/settings');
-  const opt = (key, title, sub) => `<label class="setting"><span class="setting-text"><strong>${esc(title)}</strong><small>${esc(sub)}</small></span>
-    <span class="switch"><input type="checkbox" data-key="${key}" ${st[key] ? 'checked' : ''}><span></span></span></label>`;
-  body.innerHTML = `<div class="settings">
-    ${opt('allow_user_keys', t('allowUserKeys'), t('allowUserKeysSub'))}
-    ${opt('allow_private_network', t('allowPrivate'), t('allowPrivateSub'))}</div>
-    <div class="notice${st.keys_encrypted ? ' ok' : ''}">${icon(st.keys_encrypted ? 'shield' : 'alert')}<span>${esc(st.keys_encrypted ? t('keysEncrypted') : t('keysPlain'))}</span></div>`;
+  const render = () => {
+    body.innerHTML = `<div class="settings">
+      <div class="setting"><span class="setting-text"><strong>${esc(t('keyMode'))}</strong><small>${esc(t('keyModeSub'))}</small></span>
+        <select class="setting-select" data-key="user_keys">
+          ${['off', 'official', 'custom'].map(m => `<option value="${m}" ${st.user_keys === m ? 'selected' : ''}>${esc(t('mode' + m[0].toUpperCase() + m.slice(1)))}</option>`).join('')}
+        </select></div>
+      <label class="setting${st.user_keys === 'custom' ? '' : ' muted'}"><span class="setting-text"><strong>${esc(t('allowPrivate'))}</strong>
+        <small>${esc(t('allowPrivateSub'))} ${st.user_keys === 'custom' ? '' : esc(t('privateNeedsCustom'))}</small></span>
+        <span class="switch"><input type="checkbox" data-key="allow_private_network" ${st.allow_private_network ? 'checked' : ''} ${st.user_keys === 'custom' ? '' : 'disabled'}><span></span></span></label></div>
+      <div class="notice${st.keys_encrypted ? ' ok' : ''}">${icon(st.keys_encrypted ? 'shield' : 'alert')}<span>${esc(st.keys_encrypted ? t('keysEncrypted') : t('keysPlain'))}</span></div>`;
+  };
+  render();
   body.onclick = null;
   body.onchange = async e => {
     const k = e.target.dataset.key;
     if (!k) return;
-    const res = await api('PUT', '/admin/settings', { [k]: e.target.checked });
-    if (k === 'allow_user_keys') S.userKeys = res.allow_user_keys;
+    const res = await api('PUT', '/admin/settings', { [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+    Object.assign(st, res);
+    S.userKeys = res.user_keys;
+    render();
     toast(t('saved'));
   };
 }

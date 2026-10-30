@@ -9,11 +9,65 @@ import (
 )
 
 const (
-	settingUserKeys       = "allow_user_keys"       // users may add their own providers
-	settingPrivateNetwork = "allow_private_network" // their providers may reach local/private addresses
+	settingKeyMode        = "user_keys"             // what users may add as their own providers, see keyMode*
+	settingUserKeysV020   = "allow_user_keys"       // v0.2.0 on/off switch, read as "custom"
+	settingPrivateNetwork = "allow_private_network" // custom providers may reach local/private addresses
 )
 
-func (a *App) userKeysAllowed() bool { return a.store.Setting(settingUserKeys) == "1" }
+// Personal API key modes.
+const (
+	keyModeOff      = "off"      // users can't add providers
+	keyModeOfficial = "official" // only the official endpoints below, with their own key
+	keyModeCustom   = "custom"   // any public http(s) endpoint
+)
+
+type preset struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	BaseURL string `json:"base_url"`
+}
+
+var officialPresets = []preset{
+	{"openai", "OpenAI", "openai", defaultOpenAIBase},
+	{"anthropic", "Claude", "anthropic", defaultAnthropicBase},
+	{"deepseek", "DeepSeek", "openai", "https://api.deepseek.com"},
+}
+
+// isOfficial reports whether kind + base URL is one of the official endpoints.
+func isOfficial(kind, baseURL string) bool {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	for _, pr := range officialPresets {
+		if pr.Kind == kind && (base == pr.BaseURL || base == "" && (pr.ID == "openai" || pr.ID == "anthropic")) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) keyMode() string {
+	switch m := a.store.Setting(settingKeyMode); m {
+	case keyModeOff, keyModeOfficial, keyModeCustom:
+		return m
+	}
+	if a.store.Setting(settingUserKeysV020) == "1" {
+		return keyModeCustom
+	}
+	return keyModeOff
+}
+
+func (a *App) userKeysAllowed() bool { return a.keyMode() != keyModeOff }
+
+// ownAllowed reports whether a personal provider fits the current mode.
+func (a *App) ownAllowed(kind, baseURL string) bool {
+	switch a.keyMode() {
+	case keyModeCustom:
+		return true
+	case keyModeOfficial:
+		return isOfficial(kind, baseURL)
+	}
+	return false
+}
 
 // canUse decides whether u may chat through p. It also marks users' own
 // providers for the private-network guard.
@@ -22,8 +76,8 @@ func (a *App) canUse(u *User, p *Provider) bool {
 		return false
 	}
 	if p.OwnerID != 0 {
-		p.guard = a.store.Setting(settingPrivateNetwork) != "1"
-		return p.OwnerID == u.ID && a.userKeysAllowed()
+		p.guard = a.privateNetworkBlocked()
+		return p.OwnerID == u.ID && a.ownAllowed(p.Kind, p.BaseURL)
 	}
 	return p.Visibility != "users" || slices.Contains(p.UserIDs, u.ID)
 }
@@ -34,6 +88,7 @@ type providerView struct {
 	HasKey  bool   `json:"has_key"`
 	KeyHint string `json:"key_hint"`
 	KeyErr  string `json:"key_error,omitempty"`
+	Blocked bool   `json:"blocked,omitempty"` // personal provider not allowed by the current mode
 }
 
 func viewProvider(p *Provider) providerView {
@@ -100,6 +155,10 @@ func (a *App) saveProvider(w http.ResponseWriter, r *http.Request, p *Provider) 
 	if req.APIKey != nil {
 		p.APIKey = strings.TrimSpace(*req.APIKey)
 	}
+	if p.OwnerID != 0 && !a.ownAllowed(p.Kind, p.BaseURL) {
+		writeErr(w, 403, "only the official OpenAI, Claude and DeepSeek endpoints are allowed")
+		return
+	}
 	if p.OwnerID == 0 {
 		p.Visibility, p.UserIDs = "all", nil
 		if req.Visibility == "users" {
@@ -123,14 +182,18 @@ func (a *App) saveProvider(w http.ResponseWriter, r *http.Request, p *Provider) 
 // remoteModels asks the provider which models the key can use. The request may
 // carry an unsaved key/base URL so the form can be tested before saving;
 // saved is the stored provider to borrow the key from, if any.
-func (a *App) remoteModels(w http.ResponseWriter, r *http.Request, saved *Provider, guard bool) {
+func (a *App) remoteModels(w http.ResponseWriter, r *http.Request, saved *Provider, own bool) {
 	var req providerReq
 	if !readJSON(w, r, &req) {
 		return
 	}
-	p := &Provider{Kind: req.Kind, BaseURL: strings.TrimSpace(req.BaseURL), guard: guard}
+	p := &Provider{Kind: req.Kind, BaseURL: strings.TrimSpace(req.BaseURL), guard: own && a.privateNetworkBlocked()}
 	if !validBaseURL(p.BaseURL) {
 		writeErr(w, 400, "base URL must be an http(s) URL")
+		return
+	}
+	if own && !a.ownAllowed(p.Kind, p.BaseURL) {
+		writeErr(w, 403, "only the official OpenAI, Claude and DeepSeek endpoints are allowed")
 		return
 	}
 	if req.APIKey != nil && *req.APIKey != "" {
@@ -224,7 +287,17 @@ func (a *App) privateNetworkBlocked() bool { return a.store.Setting(settingPriva
 
 func (a *App) handleListOwn(w http.ResponseWriter, r *http.Request) {
 	ps, err := a.store.OwnProviders(currentUser(r).ID)
-	writeProviders(w, ps, err)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	out := []providerView{}
+	for _, p := range ps {
+		v := viewProvider(p)
+		v.Blocked = !a.ownAllowed(p.Kind, p.BaseURL)
+		out = append(out, v)
+	}
+	writeJSON(w, out)
 }
 
 func (a *App) handleCreateOwn(w http.ResponseWriter, r *http.Request) {
@@ -251,36 +324,42 @@ func (a *App) handleOwnRemoteModels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	a.remoteModels(w, r, saved, a.privateNetworkBlocked())
+	a.remoteModels(w, r, saved, true)
 }
 
 // --- settings (admin) ---
 
-func (a *App) settingsView() map[string]bool {
-	return map[string]bool{
-		settingUserKeys:       a.userKeysAllowed(),
-		settingPrivateNetwork: !a.privateNetworkBlocked(),
-		"keys_encrypted":      a.store.box != nil,
-	}
+type settingsView struct {
+	UserKeys       string `json:"user_keys"`
+	PrivateNetwork bool   `json:"allow_private_network"`
+	KeysEncrypted  bool   `json:"keys_encrypted"`
+}
+
+func (a *App) settings() settingsView {
+	return settingsView{UserKeys: a.keyMode(), PrivateNetwork: !a.privateNetworkBlocked(), KeysEncrypted: a.store.box != nil}
 }
 
 func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, a.settingsView())
+	writeJSON(w, a.settings())
 }
 
 func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
-	var req map[string]bool
+	var req struct {
+		UserKeys       *string `json:"user_keys"`
+		PrivateNetwork *bool   `json:"allow_private_network"`
+	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	for _, k := range []string{settingUserKeys, settingPrivateNetwork} {
-		if v, ok := req[k]; ok {
-			val := "0"
-			if v {
-				val = "1"
-			}
-			a.store.SetSetting(k, val)
+	if m := req.UserKeys; m != nil {
+		if *m != keyModeOff && *m != keyModeOfficial && *m != keyModeCustom {
+			writeErr(w, 400, "user_keys must be off, official or custom")
+			return
 		}
+		a.store.SetSetting(settingKeyMode, *m)
 	}
-	writeJSON(w, a.settingsView())
+	if v := req.PrivateNetwork; v != nil {
+		a.store.SetSetting(settingPrivateNetwork, map[bool]string{true: "1", false: "0"}[*v])
+	}
+	writeJSON(w, a.settings())
 }

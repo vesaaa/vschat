@@ -62,7 +62,7 @@ func TestModelVisibility(t *testing.T) {
 	if got := ids(a.modelOptions(bob)); got != "pub-1" {
 		t.Errorf("bob sees %q", got)
 	}
-	a.store.SetSetting(settingUserKeys, "1")
+	a.store.SetSetting(settingKeyMode, keyModeCustom)
 	if got := ids(a.modelOptions(bob)); got != "pub-1,own-1" {
 		t.Errorf("bob with own keys sees %q", got)
 	}
@@ -113,7 +113,10 @@ func TestOwnProviderAPI(t *testing.T) {
 	if rec := call(alice, "POST", "/api/my/providers", newProv); rec.Code != 403 {
 		t.Fatalf("personal keys off: got %d", rec.Code)
 	}
-	a.store.SetSetting(settingUserKeys, "1")
+	if rec := call(alice, "POST", "/api/my/providers", newProv); rec.Code != 403 {
+		t.Fatalf("still off: got %d", rec.Code)
+	}
+	a.store.SetSetting(settingKeyMode, keyModeCustom)
 	rec := call(alice, "POST", "/api/my/providers", newProv)
 	if rec.Code != 200 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
@@ -254,5 +257,42 @@ func TestNetworkGuard(t *testing.T) {
 	p.guard = false
 	if _, err := p.ListRemoteModels(ctx); err != nil && strings.Contains(err.Error(), "not allowed") {
 		t.Errorf("unguarded request blocked: %v", err)
+	}
+}
+
+func TestOfficialKeyMode(t *testing.T) {
+	a := testApp(t, "")
+	u := mustUser(t, a, "u", false)
+	official := &Provider{Name: "Mine", Kind: "anthropic", BaseURL: "https://api.anthropic.com/", APIKey: "k", Models: []string{"claude-x"}, Enabled: true, OwnerID: u.ID}
+	custom := &Provider{Name: "Relay", Kind: "openai", BaseURL: "https://relay.example.com/v1", APIKey: "k", Models: []string{"relay-x"}, Enabled: true, OwnerID: u.ID}
+	// Wrong kind for an official URL does not count as official.
+	sneaky := &Provider{Name: "Sneaky", Kind: "openai", BaseURL: "https://api.anthropic.com", APIKey: "k", Models: []string{"s-x"}, Enabled: true, OwnerID: u.ID}
+	for _, p := range []*Provider{official, custom, sneaky} {
+		a.store.SaveProvider(p)
+	}
+	for mode, want := range map[string]string{
+		keyModeOff: "", keyModeOfficial: "claude-x", keyModeCustom: "claude-x,relay-x,s-x",
+	} {
+		a.store.SetSetting(settingKeyMode, mode)
+		if got := ids(a.modelOptions(u)); got != want {
+			t.Errorf("%s: got %q want %q", mode, got, want)
+		}
+	}
+	// v0.2.0 switch is read as custom.
+	a.store.SetSetting(settingKeyMode, "")
+	a.store.SetSetting(settingUserKeysV020, "1")
+	if a.keyMode() != keyModeCustom {
+		t.Errorf("legacy setting read as %q", a.keyMode())
+	}
+	for _, c := range []struct {
+		kind, url string
+		want      bool
+	}{
+		{"openai", "", true}, {"openai", "https://api.openai.com/v1/", true}, {"openai", "https://api.deepseek.com", true},
+		{"anthropic", "", true}, {"openai", "https://api.openai.com.evil.com/v1", false}, {"openai", "http://api.openai.com/v1", false},
+	} {
+		if isOfficial(c.kind, c.url) != c.want {
+			t.Errorf("isOfficial(%s, %q) want %v", c.kind, c.url, c.want)
+		}
 	}
 }

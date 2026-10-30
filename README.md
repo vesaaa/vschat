@@ -35,16 +35,20 @@ services:
     image: ghcr.io/vesaaa/vschat:latest
     restart: unless-stopped
     ports: ["8080:8080"]
-    volumes: ["vschat-data:/data"]
+    volumes:
+      - ./data:/data            # everything VsChat stores lives here
     environment:
       VSCHAT_ADMIN_PASSWORD: change-me
+      VSCHAT_SECRET: a-long-random-string-you-keep
+      # PUID: 1000              # run as your host user so ./data stays yours
+      # PGID: 1000
       # Optional: pre-fill keys on first start (can also be set in the admin UI)
       # OPENAI_API_KEY: sk-...
       # ANTHROPIC_API_KEY: sk-ant-...
       # DEEPSEEK_API_KEY: sk-...
-volumes:
-  vschat-data:
 ```
+
+A named volume (`vschat-data:/data`) works just as well. Secrets can come from files instead — `VSCHAT_SECRET_FILE: /run/secrets/vschat_secret` with Docker secrets.
 
 ## Configuration
 
@@ -56,9 +60,12 @@ volumes:
 | `VSCHAT_ADMIN_PASSWORD` | random | Password for that admin |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | | Seed provider keys on first start only |
 | `VSCHAT_SECRET` | | Encrypts stored API keys (AES-GCM). Set it before adding keys; existing plain keys are encrypted on start. Keep it safe — keys can't be read without it |
+| `PUID` / `PGID` | `10001` | Docker: user the server runs as. The container fixes `/data` ownership on start, so bind mounts work |
 | `VSCHAT_TRUST_PROXY` | | Set to `1` behind a reverse proxy so login rate-limiting uses `X-Forwarded-For` |
 
-Everything else (providers, models, users, limits) is managed in the admin panel.
+`VSCHAT_SECRET`, `VSCHAT_ADMIN_PASSWORD` and the three `*_API_KEY` variables also accept a `_FILE` suffix pointing at a file to read (Docker / Kubernetes secrets).
+
+There is no config file: everything else (providers, models, users, limits, settings) lives in the database and is managed in the admin panel. `/data` is the only directory to persist and back up.
 
 ### Providers
 
@@ -70,8 +77,13 @@ Use **Fetch from provider** in the provider editor to pick models from the live 
 ### Who can use what
 
 - **Shared providers** (Admin → Providers) are visible to *everyone* or to *selected users* — e.g. a "Claude Opus" provider only for a few people. Add the same API several times to split models into groups.
-- **Personal providers** — turn on *Admin → Settings → Let users add their own API keys*. Users then get **My models** in their menu. Those providers are private to the user, show up as "Mine" in the model picker, and their tokens are tracked separately (not counted against the monthly limit).
-- Personal providers can't reach `localhost` or private/LAN addresses by default, so users can't use the server to probe your network. Turn on *Let personal providers reach private networks* if they need e.g. a LAN Ollama.
+- **Personal providers** — *Admin → Settings → Users' own API keys*:
+  - **Not allowed** (default) — users only see shared models.
+  - **Official providers only** — users pick OpenAI, Claude or DeepSeek and paste their own key; the API address is fixed to the official endpoint.
+  - **Allow custom API URLs** — users may also point at any public OpenAI-compatible or Anthropic endpoint (relays, OpenRouter, …).
+
+  Users then get **My models** in their menu. Those providers are private to the user, show up as "Mine" in the model picker, and their tokens are tracked separately (not counted against the monthly limit). Switching to a stricter mode disables personal providers that no longer fit; they're kept and marked.
+- In custom mode, personal providers can't reach `localhost` or private/LAN addresses unless you turn on *Let personal providers reach private networks* (e.g. for a LAN Ollama), so users can't use the server to probe your network.
 
 ## Behind a reverse proxy
 

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -31,6 +32,21 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// secretEnv reads KEY, or the file named by KEY_FILE (Docker/Kubernetes secrets).
+func secretEnv(key string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	if f := os.Getenv(key + "_FILE"); f != "" {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			log.Fatalf("%s_FILE: %v", key, err)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	return ""
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -58,7 +74,7 @@ func (a *App) bootstrap() error {
 		return err
 	} else if n == 0 {
 		name := env("VSCHAT_ADMIN_USER", "admin")
-		pw := os.Getenv("VSCHAT_ADMIN_PASSWORD")
+		pw := secretEnv("VSCHAT_ADMIN_PASSWORD")
 		generated := pw == ""
 		if generated {
 			pw = randomToken(12)
@@ -76,11 +92,11 @@ func (a *App) bootstrap() error {
 		return err
 	} else if n == 0 {
 		defaults := []*Provider{
-			{Name: "OpenAI", Kind: "openai", BaseURL: defaultOpenAIBase, APIKey: os.Getenv("OPENAI_API_KEY"),
+			{Name: "OpenAI", Kind: "openai", BaseURL: defaultOpenAIBase, APIKey: secretEnv("OPENAI_API_KEY"),
 				Models: []string{"gpt-5", "gpt-5-mini"}, Enabled: true, Sort: 1},
-			{Name: "Claude", Kind: "anthropic", BaseURL: defaultAnthropicBase, APIKey: os.Getenv("ANTHROPIC_API_KEY"),
+			{Name: "Claude", Kind: "anthropic", BaseURL: defaultAnthropicBase, APIKey: secretEnv("ANTHROPIC_API_KEY"),
 				Models: []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}, Enabled: true, Sort: 2},
-			{Name: "DeepSeek", Kind: "openai", BaseURL: "https://api.deepseek.com", APIKey: os.Getenv("DEEPSEEK_API_KEY"),
+			{Name: "DeepSeek", Kind: "openai", BaseURL: "https://api.deepseek.com", APIKey: secretEnv("DEEPSEEK_API_KEY"),
 				Models: []string{"deepseek-chat", "deepseek-reasoner"}, Enabled: true, Sort: 3},
 		}
 		for _, p := range defaults {
@@ -162,7 +178,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	store.box = newSealer(os.Getenv("VSCHAT_SECRET"))
+	store.box = newSealer(secretEnv("VSCHAT_SECRET"))
 	if err := store.SealKeys(); err != nil {
 		log.Fatal(err)
 	}
