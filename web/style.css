@@ -375,6 +375,13 @@ kbd { font: 11px var(--mono); color: var(--muted); border: 1px solid var(--borde
 .setting-text { flex: 1; display: flex; flex-direction: column; gap: 3px; }
 .setting-text strong { font-weight: 500; font-size: 14px; }
 .setting-text small { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.key-link { margin-left: auto; font-weight: 400; font-size: 12px; text-decoration: none; }
+.key-link:hover { text-decoration: underline; }
+.model-picks label.locked { opacity: .75; cursor: default; }
+.adv summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 500; user-select: none; }
+.adv summary::-webkit-details-marker { display: none; }
+.adv summary svg { width: 14px; height: 14px; transition: transform .15s; }
+.adv[open] summary svg { transform: rotate(90deg); }
 .setting-select { height: 36px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; max-width: 46%; }
 .setting.muted .setting-text strong { color: var(--muted); }
 .setting.muted .switch { opacity: .45; }

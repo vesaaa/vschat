@@ -1,13 +1,13 @@
 # VsChat
 
-A small, self-hosted, multi-user AI chat. Plug in your **OpenAI (ChatGPT)**, **Anthropic (Claude)** and **DeepSeek** keys — or any OpenAI-compatible API — and give each person their own account and chat history.
+A small, self-hosted, multi-user AI chat. Plug in your keys for **ChatGPT, Claude, Gemini, Grok, DeepSeek, Qwen, Kimi or GLM** — or any OpenAI-compatible API — and give each person their own account and chat history.
 
-一个小巧的自托管多用户 AI 对话。填入 ChatGPT / Claude / DeepSeek（或任何 OpenAI 兼容接口）的 Key，每个用户有自己的账号和对话记录。
+一个小巧的自托管多用户 AI 对话。选服务商、填 Key 即可使用 ChatGPT / Claude / Gemini / Grok / DeepSeek / 通义千问 / Kimi / 智谱 GLM（或任何 OpenAI 兼容接口），每个用户有自己的账号和对话记录。
 
 - **Tiny** — one Go binary + one SQLite file. ~25 MB image; uses a few MB of RAM idle and ~25 MB in use. No Node, no Python, no database server.
 - **Multi-user** — admin creates accounts; chats are private per user; optional monthly token limit per user; usage dashboard.
 - **Shared + personal models** — admins decide which shared providers each user can see; users can optionally bring their own API keys, visible only to them and not counted against their limit.
-- **Multi-provider** — OpenAI, Claude (official SDK, with thinking shown), DeepSeek (reasoning shown), plus any OpenAI-compatible endpoint (Ollama, OpenRouter, vLLM, …). Switch models mid-chat.
+- **Built-in providers** — pick a provider, paste a key, done: the current mainstream models are built in and update with new releases. Claude goes through the official SDK with thinking shown; reasoning from DeepSeek, Qwen, Kimi and GLM is shown too. Any other OpenAI-compatible endpoint (Ollama, OpenRouter, vLLM, …) works as a custom provider. Switch models mid-chat.
 - **Nice to use** — streaming, Markdown + code highlighting, light/dark, mobile layout, 中文 / English.
 - **Long pastes become attachments** — paste a big chunk of code/log and it turns into a file card instead of flooding the input. Text files can be attached or dropped in too.
 
@@ -58,21 +58,31 @@ A named volume (`vschat-data:/data`) works just as well. Secrets can come from f
 | `VSCHAT_DATA` | `/data` (Docker), `./data` | Where `vschat.db` lives — back up this one file |
 | `VSCHAT_ADMIN_USER` | `admin` | First admin, created only when the database is empty |
 | `VSCHAT_ADMIN_PASSWORD` | random | Password for that admin |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` | | Seed provider keys on first start only |
+| `OPENAI_API_KEY` `ANTHROPIC_API_KEY` `GEMINI_API_KEY` `XAI_API_KEY` `DEEPSEEK_API_KEY` `DASHSCOPE_API_KEY` `MOONSHOT_API_KEY` `ZHIPU_API_KEY` | | On first start, adds a provider for each key given |
 | `VSCHAT_SECRET` | | Encrypts stored API keys (AES-GCM). Set it before adding keys; existing plain keys are encrypted on start. Keep it safe — keys can't be read without it |
 | `PUID` / `PGID` | `10001` | Docker: user the server runs as. The container fixes `/data` ownership on start, so bind mounts work |
 | `VSCHAT_TRUST_PROXY` | | Set to `1` behind a reverse proxy so login rate-limiting uses `X-Forwarded-For` |
 
-`VSCHAT_SECRET`, `VSCHAT_ADMIN_PASSWORD` and the three `*_API_KEY` variables also accept a `_FILE` suffix pointing at a file to read (Docker / Kubernetes secrets).
+`VSCHAT_SECRET`, `VSCHAT_ADMIN_PASSWORD` and the `*_API_KEY` variables also accept a `_FILE` suffix pointing at a file to read (Docker / Kubernetes secrets).
 
 There is no config file: everything else (providers, models, users, limits, settings) lives in the database and is managed in the admin panel. `/data` is the only directory to persist and back up.
 
 ### Providers
 
-- **OpenAI-compatible** — OpenAI, DeepSeek, and anything else speaking `/chat/completions` (set its base URL, e.g. `https://openrouter.ai/api/v1`, `http://ollama:11434/v1`).
-- **Anthropic** — Claude via the official Go SDK. Thinking summaries are shown in a collapsible "Thoughts" block, and Claude's turns are replayed unchanged so multi-turn conversations keep their reasoning and prompt cache. On `api.anthropic.com`, newer models opt into server-side refusal fallback.
+Built in (see [`catalog.go`](catalog.go)); Chinese providers default to their mainland endpoints, the rest to the official global ones:
 
-Use **Fetch from provider** in the provider editor to pick models from the live list.
+| Provider | Endpoint | Built-in models |
+|---|---|---|
+| OpenAI | api.openai.com | gpt-6.1-sol, gpt-6-astra, gpt-6.1-terra, gpt-6-luna |
+| Claude | api.anthropic.com (official SDK) | claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5 |
+| Gemini | generativelanguage.googleapis.com (OpenAI-compatible) | gemini-4-argon, gemini-3.8-flash, gemini-3.5-flash-lite |
+| Grok | api.x.ai | grok-4.7, grok-4.6 |
+| DeepSeek | api.deepseek.com | deepseek-v4-pro, deepseek-flash |
+| 通义千问 Qwen | dashscope.aliyuncs.com | qwen3.8-max, qwen3.7-plus, qwen3.8-flash |
+| Kimi | api.moonshot.cn | kimi-k3, kimi-k2.6 |
+| 智谱 GLM | open.bigmodel.cn | glm-5.3, glm-5.3-flash |
+
+A provider added from the list **follows the built-in model list** by default, so a new VsChat release brings new models with no clicks. Untick it to pick models yourself, add extra model IDs, or use **Fetch from provider**. The address can be changed under *Advanced* (e.g. Kimi's global `api.moonshot.ai`). **Custom** providers take any OpenAI-compatible or Anthropic-compatible endpoint.
 
 ### Who can use what
 

@@ -46,6 +46,7 @@ type ModelOption struct {
 	Provider string `json:"provider"`
 	Kind     string `json:"kind"`
 	Own      bool   `json:"own"` // on the user's own key
+	Preset   string `json:"preset,omitempty"`
 }
 
 func (a *App) modelOptions(u *User) []ModelOption {
@@ -56,7 +57,7 @@ func (a *App) modelOptions(u *User) []ModelOption {
 			continue
 		}
 		for _, m := range p.Models {
-			out = append(out, ModelOption{ID: fmt.Sprintf("%d/%s", p.ID, m), Model: m, Provider: p.Name, Kind: p.Kind, Own: p.OwnerID != 0})
+			out = append(out, ModelOption{ID: fmt.Sprintf("%d/%s", p.ID, m), Model: m, Provider: p.Name, Kind: p.Kind, Own: p.OwnerID != 0, Preset: p.Preset})
 		}
 	}
 	return out

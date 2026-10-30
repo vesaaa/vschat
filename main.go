@@ -88,24 +88,23 @@ func (a *App) bootstrap() error {
 			log.Printf("created admin user %q", name)
 		}
 	}
+	// On a fresh install, add a provider for each catalog key given in the environment.
 	if n, err := a.store.CountProviders(); err != nil {
 		return err
 	} else if n == 0 {
-		defaults := []*Provider{
-			{Name: "OpenAI", Kind: "openai", BaseURL: defaultOpenAIBase, APIKey: secretEnv("OPENAI_API_KEY"),
-				Models: []string{"gpt-5", "gpt-5-mini"}, Enabled: true, Sort: 1},
-			{Name: "Claude", Kind: "anthropic", BaseURL: defaultAnthropicBase, APIKey: secretEnv("ANTHROPIC_API_KEY"),
-				Models: []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}, Enabled: true, Sort: 2},
-			{Name: "DeepSeek", Kind: "openai", BaseURL: "https://api.deepseek.com", APIKey: secretEnv("DEEPSEEK_API_KEY"),
-				Models: []string{"deepseek-chat", "deepseek-reasoner"}, Enabled: true, Sort: 3},
-		}
-		for _, p := range defaults {
+		for i, pr := range catalog {
+			key := secretEnv(pr.KeyEnv)
+			if key == "" {
+				continue
+			}
+			p := &Provider{Name: pr.Name, Kind: pr.Kind, BaseURL: pr.BaseURL, APIKey: key, Preset: pr.ID,
+				AutoModels: true, Models: pr.Models, Enabled: true, Sort: int64(i + 1)}
 			if err := a.store.SaveProvider(p); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+	return a.store.LinkPresets()
 }
 
 func (a *App) routes() http.Handler {
@@ -115,6 +114,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/me", a.requireUser(a.handleMe))
 	mux.HandleFunc("POST /api/me/password", a.requireUser(a.handleChangePassword))
 	mux.HandleFunc("GET /api/models", a.requireUser(a.handleModels))
+	mux.HandleFunc("GET /api/catalog", a.requireUser(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, catalog) }))
 	mux.HandleFunc("GET /api/chats", a.requireUser(a.handleListChats))
 	mux.HandleFunc("GET /api/chats/{id}", a.requireUser(a.handleGetChat))
 	mux.HandleFunc("PATCH /api/chats/{id}", a.requireUser(a.handleUpdateChat))

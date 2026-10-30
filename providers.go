@@ -17,33 +17,9 @@ const (
 // Personal API key modes.
 const (
 	keyModeOff      = "off"      // users can't add providers
-	keyModeOfficial = "official" // only the official endpoints below, with their own key
+	keyModeOfficial = "official" // only catalog endpoints (catalog.go), with their own key
 	keyModeCustom   = "custom"   // any public http(s) endpoint
 )
-
-type preset struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Kind    string `json:"kind"`
-	BaseURL string `json:"base_url"`
-}
-
-var officialPresets = []preset{
-	{"openai", "OpenAI", "openai", defaultOpenAIBase},
-	{"anthropic", "Claude", "anthropic", defaultAnthropicBase},
-	{"deepseek", "DeepSeek", "openai", "https://api.deepseek.com"},
-}
-
-// isOfficial reports whether kind + base URL is one of the official endpoints.
-func isOfficial(kind, baseURL string) bool {
-	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	for _, pr := range officialPresets {
-		if pr.Kind == kind && (base == pr.BaseURL || base == "" && (pr.ID == "openai" || pr.ID == "anthropic")) {
-			return true
-		}
-	}
-	return false
-}
 
 func (a *App) keyMode() string {
 	switch m := a.store.Setting(settingKeyMode); m {
@@ -118,6 +94,8 @@ func writeProviders(w http.ResponseWriter, ps []*Provider, err error) {
 }
 
 type providerReq struct {
+	Preset     string   `json:"preset"`      // catalog preset, "" for a custom provider
+	AutoModels bool     `json:"auto_models"` // follow the preset's model list
 	Name       string   `json:"name"`
 	Kind       string   `json:"kind"`
 	BaseURL    string   `json:"base_url"`
@@ -145,12 +123,30 @@ func (a *App) saveProvider(w http.ResponseWriter, r *http.Request, p *Provider) 
 		return
 	}
 	req.BaseURL = strings.TrimSpace(req.BaseURL)
+	pr := presetByID(req.Preset)
+	if pr != nil {
+		// A preset fixes the API type; the address defaults to the official one.
+		req.Kind = pr.Kind
+		if req.BaseURL == "" {
+			req.BaseURL = pr.BaseURL
+		}
+	}
 	if !validBaseURL(req.BaseURL) {
 		writeErr(w, 400, "base URL must be an http(s) URL")
 		return
 	}
 	p.Name, p.Kind, p.BaseURL = strings.TrimSpace(req.Name), req.Kind, req.BaseURL
+	p.Preset, p.AutoModels = "", false
+	if pr != nil {
+		p.Preset, p.AutoModels = pr.ID, req.AutoModels
+	}
 	p.Models = splitModels(strings.Join(req.Models, "\n"))
+	if p.AutoModels {
+		p.Models = pr.Models
+	} else if len(p.Models) == 0 {
+		writeErr(w, 400, "pick at least one model")
+		return
+	}
 	p.Enabled, p.Sort = req.Enabled, req.Sort
 	if req.APIKey != nil {
 		p.APIKey = strings.TrimSpace(*req.APIKey)

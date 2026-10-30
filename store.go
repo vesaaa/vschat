@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -84,6 +85,7 @@ var migrations = []struct{ table, column, def string }{
 	{"providers", "visibility", "TEXT NOT NULL DEFAULT 'all'"}, // shared providers: "all" or "users"
 	{"usage", "own_in", "INTEGER NOT NULL DEFAULT 0"},          // tokens on users' own keys
 	{"usage", "own_out", "INTEGER NOT NULL DEFAULT 0"},
+	{"providers", "preset", "TEXT NOT NULL DEFAULT ''"}, // catalog preset ID; with empty models it follows the catalog
 }
 
 type Store struct {
@@ -110,10 +112,12 @@ type Provider struct {
 	Models     []string `json:"models"`
 	Enabled    bool     `json:"enabled"`
 	Sort       int64    `json:"sort"`
-	OwnerID    int64    `json:"owner_id"`   // 0 = shared provider managed by admins
-	Visibility string   `json:"visibility"` // shared only: "all" or "users"
-	UserIDs    []int64  `json:"user_ids"`   // who may use it when Visibility is "users"
-	KeyErr     error    `json:"-"`          // key could not be decrypted
+	Preset     string   `json:"preset"`
+	AutoModels bool     `json:"auto_models"` // models come from the catalog preset
+	OwnerID    int64    `json:"owner_id"`    // 0 = shared provider managed by admins
+	Visibility string   `json:"visibility"`  // shared only: "all" or "users"
+	UserIDs    []int64  `json:"user_ids"`    // who may use it when Visibility is "users"
+	KeyErr     error    `json:"-"`           // key could not be decrypted
 	guard      bool     // block private-network targets (users' own providers)
 }
 
@@ -199,6 +203,40 @@ func (s *Store) SealKeys() error {
 	rows.Close()
 	for id, k := range keys {
 		if _, err := s.db.Exec(`UPDATE providers SET api_key=? WHERE id=?`, s.box.seal(k), id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LinkPresets ties providers from before the catalog to their preset, and lets
+// the ones still on an old seeded model list follow the catalog from now on.
+func (s *Store) LinkPresets() error {
+	rows, err := s.db.Query(`SELECT id, kind, base_url, models FROM providers WHERE preset=''`)
+	if err != nil {
+		return err
+	}
+	type link struct {
+		id     int64
+		preset string
+		auto   bool
+	}
+	var links []link
+	for rows.Next() {
+		var id int64
+		var kind, base, models string
+		rows.Scan(&id, &kind, &base, &models)
+		if pr := presetFor(kind, base); pr != nil {
+			links = append(links, link{id, pr.ID, isLegacySeed(splitModels(models))})
+		}
+	}
+	rows.Close()
+	for _, l := range links {
+		q := `UPDATE providers SET preset=? WHERE id=?`
+		if l.auto {
+			q = `UPDATE providers SET preset=?, models='' WHERE id=?`
+		}
+		if _, err := s.db.Exec(q, l.preset, l.id); err != nil {
 			return err
 		}
 	}
@@ -345,7 +383,7 @@ func splitModels(s string) []string {
 	return out
 }
 
-const providerCols = `id, name, kind, base_url, api_key, models, enabled, sort, owner_id, visibility`
+const providerCols = `id, name, kind, base_url, api_key, models, enabled, sort, owner_id, visibility, preset`
 
 func (s *Store) queryProviders(where string, args ...any) ([]*Provider, error) {
 	rows, err := s.db.Query(`SELECT `+providerCols+` FROM providers `+where+` ORDER BY sort, id`, args...)
@@ -357,11 +395,14 @@ func (s *Store) queryProviders(where string, args ...any) ([]*Provider, error) {
 	for rows.Next() {
 		var p Provider
 		var models string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &models, &p.Enabled, &p.Sort, &p.OwnerID, &p.Visibility); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &models, &p.Enabled, &p.Sort, &p.OwnerID, &p.Visibility, &p.Preset); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		p.Models = splitModels(models)
+		if pr := presetByID(p.Preset); pr != nil && len(p.Models) == 0 {
+			p.AutoModels, p.Models = true, slices.Clone(pr.Models)
+		}
 		p.APIKey, p.KeyErr = s.box.open(p.APIKey)
 		p.UserIDs = []int64{}
 		out = append(out, &p)
@@ -413,6 +454,9 @@ func (s *Store) Provider(id int64) (*Provider, error) {
 
 func (s *Store) SaveProvider(p *Provider) error {
 	models := strings.Join(p.Models, "\n")
+	if p.AutoModels && presetByID(p.Preset) != nil {
+		models = ""
+	}
 	if p.Visibility == "" {
 		p.Visibility = "all"
 	}
@@ -427,14 +471,17 @@ func (s *Store) SaveProvider(p *Provider) error {
 	}
 	defer tx.Rollback()
 	if p.ID == 0 {
-		res, err := tx.Exec(`INSERT INTO providers(name, kind, base_url, api_key, models, enabled, sort, owner_id, visibility) VALUES(?,?,?,?,?,?,?,?,?)`,
-			p.Name, p.Kind, p.BaseURL, key, models, b2i(p.Enabled), p.Sort, p.OwnerID, p.Visibility)
+		if p.Sort == 0 {
+			tx.QueryRow(`SELECT COALESCE(MAX(sort),0)+1 FROM providers`).Scan(&p.Sort) // new ones go last
+		}
+		res, err := tx.Exec(`INSERT INTO providers(name, kind, base_url, api_key, models, enabled, sort, owner_id, visibility, preset) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+			p.Name, p.Kind, p.BaseURL, key, models, b2i(p.Enabled), p.Sort, p.OwnerID, p.Visibility, p.Preset)
 		if err != nil {
 			return err
 		}
 		p.ID, _ = res.LastInsertId()
-	} else if _, err := tx.Exec(`UPDATE providers SET name=?, kind=?, base_url=?, api_key=?, models=?, enabled=?, sort=?, visibility=? WHERE id=?`,
-		p.Name, p.Kind, p.BaseURL, key, models, b2i(p.Enabled), p.Sort, p.Visibility, p.ID); err != nil {
+	} else if _, err := tx.Exec(`UPDATE providers SET name=?, kind=?, base_url=?, api_key=?, models=?, enabled=?, sort=?, visibility=?, preset=? WHERE id=?`,
+		p.Name, p.Kind, p.BaseURL, key, models, b2i(p.Enabled), p.Sort, p.Visibility, p.Preset, p.ID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM provider_users WHERE provider_id=?`, p.ID); err != nil {

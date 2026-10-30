@@ -39,7 +39,9 @@ const I18N = {
     myModels: '我的模型', myModelsSub: '添加你自己的 API Key，只有你能看到和使用，用量不计入额度。', noOwn: '还没有添加自己的模型服务',
     keyMode: '用户自己的 API Key', keyModeSub: '用户可以在「我的模型」中接入自己的服务，只对本人可见，用量不计入额度。',
     modeOff: '不允许', modeOfficial: '仅官方服务（OpenAI / Claude / DeepSeek）', modeCustom: '允许自定义 API 地址',
-    providerPreset: '服务商', blockedMode: '当前设置下不可用', privateNeedsCustom: '仅在「允许自定义 API 地址」时生效。',
+    providerPreset: '服务商', customOpenAI: '自定义（OpenAI 兼容接口）', customAnthropic: '自定义（Anthropic 接口）',
+    getKey: '获取 API Key', autoModels: '使用内置模型列表（随版本自动更新）', moreModels: '其他模型', moreModelsHint: '每行一个，可选',
+    advanced: '高级', cnRegion: '国内', pickOneModel: '请至少选择一个模型', blockedMode: '当前设置下不可用', privateNeedsCustom: '仅在「允许自定义 API 地址」时生效。',
     allowPrivate: '允许个人服务访问内网地址', allowPrivateSub: '默认禁止，防止用户借服务器访问本机或内网。需要接入内网的 Ollama 等服务时再开启。',
     keysEncrypted: 'API Key 已加密存储（VSCHAT_SECRET 已设置）', keysPlain: 'API Key 以明文存储。设置环境变量 VSCHAT_SECRET 可加密保存。',
   },
@@ -80,7 +82,9 @@ const I18N = {
     myModels: 'My models', myModelsSub: 'Add your own API keys. Only you can see and use them, and they don’t count toward your limit.', noOwn: 'No personal providers yet',
     keyMode: 'Users’ own API keys', keyModeSub: 'Users can connect their own providers under “My models”, visible only to them and not counted against their limit.',
     modeOff: 'Not allowed', modeOfficial: 'Official providers only (OpenAI / Claude / DeepSeek)', modeCustom: 'Allow custom API URLs',
-    providerPreset: 'Provider', blockedMode: 'Not allowed by current settings', privateNeedsCustom: 'Only applies when custom API URLs are allowed.',
+    providerPreset: 'Provider', customOpenAI: 'Custom (OpenAI-compatible)', customAnthropic: 'Custom (Anthropic API)',
+    getKey: 'Get an API key', autoModels: 'Use the built-in model list (updates with new releases)', moreModels: 'More models', moreModelsHint: 'One per line, optional',
+    advanced: 'Advanced', cnRegion: 'China', pickOneModel: 'Pick at least one model', blockedMode: 'Not allowed by current settings', privateNeedsCustom: 'Only applies when custom API URLs are allowed.',
     allowPrivate: 'Let personal providers reach private networks', allowPrivateSub: 'Off by default so users can’t use the server to reach localhost or your LAN. Turn on for a LAN Ollama and the like.',
     keysEncrypted: 'API keys are encrypted at rest (VSCHAT_SECRET is set)', keysPlain: 'API keys are stored in plain text. Set VSCHAT_SECRET to encrypt them.',
   },
@@ -236,7 +240,7 @@ function renderMarkdown(el, text, live) {
 /* ================= state ================= */
 const S = {
   me: null, monthTokens: 0, models: [], chats: [], chatId: null, messages: [],
-  model: store.get('model', ''), attachments: [], controller: null, search: '', userKeys: 'off', presets: [],
+  model: store.get('model', ''), attachments: [], controller: null, search: '', userKeys: 'off', catalog: [],
 };
 const modelById = id => S.models.find(m => m.id === id);
 
@@ -263,12 +267,12 @@ $('#login-form').addEventListener('submit', async e => {
 async function boot() {
   let me;
   try { me = await api('GET', '/me'); } catch { return; }
-  S.me = me.user; S.monthTokens = me.month_tokens; S.userKeys = me.user_keys; S.presets = me.key_presets || [];
+  S.me = me.user; S.monthTokens = me.month_tokens; S.userKeys = me.user_keys;
   $('#login').hidden = true;
   $('#app').hidden = false;
   $('#user-name').textContent = S.me.username;
   $('#user-avatar').textContent = S.me.username.slice(0, 1).toUpperCase();
-  await Promise.all([loadModels(), loadChats()]);
+  await Promise.all([loadModels(), loadChats(), api('GET', '/catalog').then(c => { S.catalog = c; })]);
   const m = location.hash.match(/^#\/c\/(\d+)/);
   if (m) await openChat(+m[1]); else newChat();
 }
@@ -293,7 +297,9 @@ function setModel(id) {
 }
 
 const KIND_COLORS = { anthropic: '#d97757', openai: '#10a37f' };
-function providerColor(name, kind) {
+function providerColor(name, kind, preset) {
+  const pr = S.catalog.find(c => c.id === preset);
+  if (pr) return pr.color;
   if (/deepseek/i.test(name)) return '#4d6bfe';
   return KIND_COLORS[kind] || '#6366f1';
 }
@@ -308,7 +314,7 @@ function openModelMenu() {
       if (q && !(m.model + ' ' + m.provider).toLowerCase().includes(q)) continue;
       const g = m.own ? `${t('mine')} · ${m.provider}` : m.provider;
       if (g !== group) { group = g; html += `<div class="menu-label">${esc(group)}</div>`; }
-      html += `<button class="menu-item" data-id="${esc(m.id)}"><span class="kind-dot" style="background:${providerColor(m.provider, m.kind)}"></span>
+      html += `<button class="menu-item" data-id="${esc(m.id)}"><span class="kind-dot" style="background:${providerColor(m.provider, m.kind, m.preset)}"></span>
         <span>${esc(m.model)}</span>${m.id === S.model ? `<span class="check-mark">${icon('check')}</span>` : ''}</button>`;
     }
     if (!S.models.length) html += `<div class="empty-state">${esc(S.me.is_admin ? t('welcomeNoModelAdmin') : t('welcomeNoModel'))}</div>`;
@@ -921,7 +927,7 @@ const OWN = { base: '/my/providers', shared: false };
 function providerCards(ps, scope) {
   if (!ps.length) return scope.shared ? '' : `<div class="empty-state">${esc(t('noOwn'))}</div>`;
   return `<div class="prov-list">${ps.map(p => `<div class="prov" data-id="${p.id}">
-    <div class="prov-logo" style="background:${providerColor(p.name, p.kind)}">${esc(p.name.slice(0, 1).toUpperCase())}</div>
+    <div class="prov-logo" style="background:${providerColor(p.name, p.kind, p.preset)}">${esc(p.name.slice(0, 1).toUpperCase())}</div>
     <div class="prov-info">
       <div class="prov-name">${esc(p.name)}<span class="badge">${esc(p.kind === 'anthropic' ? 'Anthropic' : 'OpenAI API')}</span>
         ${scope.shared && p.visibility === 'users' ? `<span class="badge accent">${esc(t('usersCount', p.user_ids.length))}</span>` : ''}
@@ -949,7 +955,7 @@ async function providerList(body, scope) {
     const p = ps.find(x => x.id === +e.target.closest('.prov').dataset.id);
     p.enabled = e.target.checked;
     await api('PUT', `${scope.base}/${p.id}`, { name: p.name, kind: p.kind, base_url: p.base_url, models: p.models,
-      enabled: p.enabled, sort: p.sort, visibility: p.visibility, user_ids: p.user_ids });
+      enabled: p.enabled, sort: p.sort, visibility: p.visibility, user_ids: p.user_ids, preset: p.preset, auto_models: p.auto_models });
   };
 }
 
@@ -962,51 +968,98 @@ function openMyModels() {
 }
 
 function providerForm(p, scope, users, done) {
-  // In "official" mode a personal provider is picked from the presets; kind and
-  // base URL follow the preset and can't be edited.
+  // Pick a provider from the built-in catalog (or a custom endpoint), paste a key,
+  // and by default follow the catalog's model list. In "official" mode personal
+  // providers are catalog-only and the address can't be changed.
   const official = !scope.shared && S.userKeys === 'official';
+  const presetOpts = S.catalog.map(pr => `<option value="${esc(pr.id)}">${esc(pr.name)}${pr.region === 'cn' ? ` · ${esc(t('cnRegion'))}` : ''}</option>`).join('');
   const form = h(`<form style="display:flex;flex-direction:column;gap:14px">
     <div class="row">
+      <label class="field"><span>${esc(t('providerPreset'))}</span><select name="preset">${presetOpts}
+        ${official ? '' : `<option value="custom:openai">${esc(t('customOpenAI'))}</option><option value="custom:anthropic">${esc(t('customAnthropic'))}</option>`}</select></label>
       <label class="field"><span>${esc(t('name'))}</span><input name="name" required></label>
-      ${official ? `<label class="field"><span>${esc(t('providerPreset'))}</span><select name="preset">
-          ${S.presets.map(pr => `<option value="${esc(pr.id)}">${esc(pr.name)}</option>`).join('')}</select></label>
-        <input type="hidden" name="kind">`
-      : `<label class="field"><span>${esc(t('kind'))}</span><select name="kind">
-        <option value="openai">${esc(t('kindOpenAI'))}</option><option value="anthropic">${esc(t('kindAnthropic'))}</option></select></label>`}
     </div>
-    ${official ? '<input type="hidden" name="base_url">'
-      : `<label class="field"><span>${esc(t('baseURL'))}</span><input name="base_url" placeholder="https://api.openai.com/v1"></label>`}
-    <label class="field"><span>${esc(t('apiKey'))}</span><input name="api_key" type="password" autocomplete="off"
-      placeholder="${p?.has_key ? esc(t('keySet', p.key_hint || '••••')) : esc(t('keyNotSet'))}"></label>
-    <label class="field"><span>${esc(t('models'))} <small>${esc(t('modelsHint'))}</small></span><textarea name="models" rows="5"></textarea></label>
-    <div><button type="button" class="btn btn-sm" data-fetch>${icon('refresh')}<span>${esc(t('fetchModels'))}</span></button></div>
-    <div class="model-picks" data-picks hidden></div>
+    <label class="field"><span class="row" style="gap:8px">${esc(t('apiKey'))}<a class="key-link" target="_blank" rel="noopener" hidden>${esc(t('getKey'))} ↗</a></span>
+      <input name="api_key" type="password" autocomplete="off" placeholder="${p?.has_key ? esc(t('keySet', p.key_hint || '••••')) : esc(t('keyNotSet'))}"></label>
+    <div class="field"><span>${esc(t('models'))}</span>
+      <label class="check" data-auto-row><input type="checkbox" name="auto_models"><span>${esc(t('autoModels'))}</span></label>
+      <div class="model-picks" data-picks></div>
+      <div data-manual style="display:flex;flex-direction:column;gap:8px">
+        <label class="field"><span>${esc(t('moreModels'))} <small>${esc(t('moreModelsHint'))}</small></span><textarea name="models" rows="3"></textarea></label>
+        <div><button type="button" class="btn btn-sm" data-fetch>${icon('refresh')}<span>${esc(t('fetchModels'))}</span></button></div>
+      </div>
+    </div>
+    ${official ? '<input type="hidden" name="base_url"><input type="hidden" name="kind">' : `<details class="adv"><summary>${icon('right')}<span>${esc(t('advanced'))}</span></summary>
+      <div style="display:flex;flex-direction:column;gap:14px;margin-top:12px">
+        <label class="field" data-kind-row><span>${esc(t('kind'))}</span><select name="kind">
+          <option value="openai">${esc(t('kindOpenAI'))}</option><option value="anthropic">${esc(t('kindAnthropic'))}</option></select></label>
+        <label class="field"><span>${esc(t('baseURL'))}</span><input name="base_url"></label>
+      </div></details>`}
     ${scope.shared ? `<label class="field"><span>${esc(t('visibility'))}</span><select name="visibility">
         <option value="all">${esc(t('everyone'))}</option><option value="users">${esc(t('selectedUsers'))}</option></select></label>
       <div class="model-picks" data-users hidden></div>` : ''}
     <label class="check"><input type="checkbox" name="enabled"><span>${esc(t('enabled'))}</span></label>
     <div class="form-error"></div></form>`);
-  form.name.value = p?.name || '';
-  form.kind.value = p?.kind || 'openai';
-  form.base_url.value = p?.base_url || '';
-  form.models.value = (p?.models || []).join('\n');
-  form.enabled.checked = p ? p.enabled : true;
-  if (official) {
-    const norm = u => (u || '').replace(/\/+$/, '');
-    const cur = p && S.presets.find(pr => pr.kind === p.kind && (norm(p.base_url) === pr.base_url || (!p.base_url && pr.id === p.kind)));
-    form.preset.value = cur?.id || S.presets[0]?.id;
-    let lastName = '';
-    const syncPreset = () => {
-      const pr = S.presets.find(x => x.id === form.preset.value);
-      form.kind.value = pr.kind; form.base_url.value = pr.base_url;
+
+  const picks = form.querySelector('[data-picks]'), manual = form.querySelector('[data-manual]');
+  const autoRow = form.querySelector('[data-auto-row]'), keyLink = form.querySelector('.key-link');
+  const preset = () => S.catalog.find(c => c.id === form.preset.value);
+  const lines = text => text.split('\n').map(x => x.trim()).filter(Boolean);
+  let selected = new Set(p && !p.auto_models ? p.models : []);
+  let lastName = '';
+
+  const renderPicks = () => {
+    const pr = preset();
+    const auto = pr && form.auto_models.checked;
+    autoRow.hidden = !pr;
+    manual.hidden = auto;
+    const list = pr ? pr.models : [];
+    picks.hidden = !list.length;
+    picks.innerHTML = list.map(m => `<label class="${auto ? 'locked' : ''}"><input type="checkbox" value="${esc(m)}" ${auto || selected.has(m) ? 'checked' : ''} ${auto ? 'disabled' : ''}>${esc(m)}</label>`).join('');
+  };
+  const onPreset = (first) => {
+    const pr = preset();
+    const custom = form.preset.value.startsWith('custom:');
+    if (pr) {
+      form.kind.value = pr.kind;
+      if (!first || !p) form.base_url.value = pr.base_url;
       if (!form.name.value || form.name.value === lastName) form.name.value = pr.name;
       lastName = pr.name;
-    };
-    form.preset.onchange = syncPreset; syncPreset();
-  } else {
-    const syncPlaceholder = () => { form.base_url.placeholder = form.kind.value === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'; };
-    form.kind.onchange = syncPlaceholder; syncPlaceholder();
-  }
+      keyLink.href = pr.key_url; keyLink.hidden = !pr.key_url;
+      if (!first) { form.auto_models.checked = true; selected = new Set(pr.models); }
+    } else {
+      form.kind.value = form.preset.value.slice(7);
+      if (!first) { form.base_url.value = ''; if (form.name.value === lastName) form.name.value = ''; lastName = ''; }
+      keyLink.hidden = true;
+    }
+    const kindRow = form.querySelector('[data-kind-row]');
+    if (kindRow) kindRow.hidden = !custom;
+    if (form.base_url.type !== 'hidden') form.base_url.placeholder = form.kind.value === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1';
+    if (custom) form.querySelector('details.adv').open = true;
+    renderPicks();
+  };
+
+  // initial state
+  const pr0 = p && S.catalog.find(c => c.id === p.preset);
+  form.preset.value = pr0 ? pr0.id : p ? `custom:${p.kind}` : (S.catalog[0]?.id || 'custom:openai');
+  if (official && !pr0) form.preset.value = S.catalog[0]?.id;
+  form.name.value = p?.name || '';
+  lastName = pr0 ? pr0.name : '';
+  form.base_url.value = p?.base_url || '';
+  form.auto_models.checked = p ? !!p.auto_models : true;
+  form.models.value = (p?.models || []).filter(m => !(pr0 && pr0.models.includes(m))).join('\n');
+  if (p?.auto_models && pr0) form.models.value = '';
+  form.enabled.checked = p ? p.enabled : true;
+  if (!p && preset()) selected = new Set(preset().models);
+  onPreset(true);
+  form.preset.onchange = () => onPreset(false);
+  if (form.kind.tagName === 'SELECT') form.kind.onchange = () => onPreset(false);
+  form.auto_models.onchange = () => {
+    if (!form.auto_models.checked && preset() && !selected.size) selected = new Set(preset().models);
+    renderPicks();
+  };
+  picks.onchange = e => { if (e.target.checked) selected.add(e.target.value); else selected.delete(e.target.value); };
+
   const userBox = form.querySelector('[data-users]');
   if (userBox) {
     const allowed = new Set(p?.user_ids || []);
@@ -1018,7 +1071,11 @@ function providerForm(p, scope, users, done) {
   }
   const err = form.querySelector('.form-error');
   const values = () => {
-    const v = { name: form.name.value, kind: form.kind.value, base_url: form.base_url.value, models: form.models.value.split('\n'), enabled: form.enabled.checked, sort: p?.sort || 0 };
+    const pr = preset();
+    const auto = !!pr && form.auto_models.checked;
+    const models = auto ? [] : [...new Set([...(pr ? pr.models.filter(m => selected.has(m)) : []), ...lines(form.models.value)])];
+    const v = { preset: pr ? pr.id : '', auto_models: auto, name: form.name.value, kind: form.kind.value, base_url: form.base_url.value,
+      models, enabled: form.enabled.checked, sort: p?.sort || 0 };
     if (form.api_key.value) v.api_key = form.api_key.value;
     if (userBox) {
       v.visibility = form.visibility.value;
@@ -1031,22 +1088,26 @@ function providerForm(p, scope, users, done) {
     b.disabled = true; label.textContent = t('fetching'); err.textContent = '';
     try {
       const list = await api('POST', `${scope.base}/${p?.id || 0}/models`, values());
-      const picks = form.querySelector('[data-picks]');
-      const current = new Set(form.models.value.split('\n').map(s => s.trim()).filter(Boolean));
-      picks.innerHTML = list.map(m => `<label><input type="checkbox" value="${esc(m)}" ${current.has(m) ? 'checked' : ''}>${esc(m)}</label>`).join('');
-      picks.hidden = !list.length;
-      picks.onchange = ev => {
-        const set = new Set(form.models.value.split('\n').map(s => s.trim()).filter(Boolean));
+      const known = new Set(preset()?.models || []);
+      const extra = new Set(lines(form.models.value));
+      const box = h('<div class="model-picks"></div>');
+      box.innerHTML = list.filter(m => !known.has(m)).map(m => `<label><input type="checkbox" value="${esc(m)}" ${extra.has(m) ? 'checked' : ''}>${esc(m)}</label>`).join('');
+      box.onchange = ev => {
+        const set = new Set(lines(form.models.value));
         ev.target.checked ? set.add(ev.target.value) : set.delete(ev.target.value);
         form.models.value = [...set].join('\n');
       };
+      manual.querySelector('.model-picks')?.remove();
+      if (box.children.length) manual.append(box);
     } catch (ex) { err.textContent = ex.message; }
     b.disabled = false; label.textContent = t('fetchModels');
   };
   const submit = async () => {
     if (!form.reportValidity()) return;
+    const v = values();
+    if (!v.auto_models && !v.models.length) { err.textContent = t('pickOneModel'); return; }
     try {
-      if (p) await api('PUT', `${scope.base}/${p.id}`, values()); else await api('POST', scope.base, values());
+      if (p) await api('PUT', `${scope.base}/${p.id}`, v); else await api('POST', scope.base, v);
       dlg.close(); toast(t('saved')); done();
     } catch (e) { err.textContent = e.message; }
   };

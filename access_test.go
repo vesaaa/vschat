@@ -296,3 +296,62 @@ func TestOfficialKeyMode(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogPresets(t *testing.T) {
+	a := testApp(t, "")
+	// v0.2-style rows: one on the old seed list, one hand-picked, one custom relay.
+	for _, p := range []*Provider{
+		{Name: "DeepSeek", Kind: "openai", BaseURL: "https://api.deepseek.com", APIKey: "k", Models: []string{"deepseek-chat", "deepseek-reasoner"}, Enabled: true},
+		{Name: "OpenAI", Kind: "openai", BaseURL: "https://api.openai.com/v1/", APIKey: "k", Models: []string{"gpt-6-luna"}, Enabled: true},
+		{Name: "Relay", Kind: "openai", BaseURL: "https://relay.example.com/v1", APIKey: "k", Models: []string{"x"}, Enabled: true},
+	} {
+		a.store.SaveProvider(p)
+	}
+	if err := a.store.LinkPresets(); err != nil {
+		t.Fatal(err)
+	}
+	ps, _ := a.store.SharedProviders()
+	ds, oa, relay := ps[0], ps[1], ps[2]
+	if ds.Preset != "deepseek" || !ds.AutoModels || strings.Join(ds.Models, ",") != strings.Join(presetByID("deepseek").Models, ",") {
+		t.Errorf("legacy seed should follow catalog: %+v", ds)
+	}
+	if oa.Preset != "openai" || oa.AutoModels || strings.Join(oa.Models, ",") != "gpt-6-luna" {
+		t.Errorf("hand-picked list must be kept: %+v", oa)
+	}
+	if relay.Preset != "" || relay.AutoModels {
+		t.Errorf("custom provider got a preset: %+v", relay)
+	}
+
+	// Saving through the API with a preset: kind and address come from the catalog.
+	admin := mustUser(t, a, "root", true)
+	tok := randomToken(16)
+	a.store.CreateSession(hashToken(tok), admin.ID, time.Hour)
+	post := func(body any) *httptest.ResponseRecorder {
+		var b bytes.Buffer
+		json.NewEncoder(&b).Encode(body)
+		req := httptest.NewRequest("POST", "/api/admin/providers", &b)
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+		rec := httptest.NewRecorder()
+		a.routes().ServeHTTP(rec, req)
+		return rec
+	}
+	rec := post(map[string]any{"preset": "anthropic", "kind": "openai", "name": "Claude", "api_key": "k", "auto_models": true, "enabled": true})
+	var v providerView
+	json.Unmarshal(rec.Body.Bytes(), &v)
+	if rec.Code != 200 || v.Kind != "anthropic" || v.BaseURL != "https://api.anthropic.com" || !v.AutoModels || len(v.Models) == 0 {
+		t.Fatalf("preset save: %d %s", rec.Code, rec.Body)
+	}
+	var raw string
+	a.store.db.QueryRow(`SELECT models FROM providers WHERE id=?`, v.ID).Scan(&raw)
+	if raw != "" {
+		t.Errorf("auto models stored a fixed list: %q", raw)
+	}
+	if rec := post(map[string]any{"kind": "openai", "name": "Empty", "api_key": "k", "enabled": true}); rec.Code != 400 {
+		t.Errorf("custom provider without models accepted: %d", rec.Code)
+	}
+	for _, pr := range catalog {
+		if !isOfficial(pr.Kind, pr.BaseURL) || len(pr.Models) == 0 || pr.KeyEnv == "" {
+			t.Errorf("catalog entry incomplete: %s", pr.ID)
+		}
+	}
+}
