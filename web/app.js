@@ -33,7 +33,13 @@ const I18N = {
     keySet: hint => `已设置 ${hint}，留空保持不变`, keyNotSet: '未设置', models: '模型列表', modelsHint: '每行一个模型 ID',
     fetchModels: '从服务商获取', fetching: '获取中…', enabled: '启用', deleteProvider: name => `删除服务「${name}」？`,
     modelCount: n => `${n} 个模型`, noKey: '缺少 Key', saved: '已保存',
-    month: '月份', requests: '请求数', input: '输入', output: '输出', total: '合计',
+    month: '月份', requests: '请求数', input: '输入', output: '输出', total: '合计', ownKeys: '自带 Key',
+    visibility: '谁可以使用', everyone: '所有用户', selectedUsers: '指定用户', usersCount: n => `${n} 位用户`,
+    pickUsers: '勾选可以使用的用户', settings: '设置', mine: '我的',
+    myModels: '我的模型', myModelsSub: '添加你自己的 API Key，只有你能看到和使用，用量不计入额度。', noOwn: '还没有添加自己的模型服务',
+    allowUserKeys: '允许用户添加自己的 API Key', allowUserKeysSub: '开启后，用户可以在「我的模型」中接入自己的服务，只对本人可见。',
+    allowPrivate: '允许个人服务访问内网地址', allowPrivateSub: '默认禁止，防止用户借服务器访问本机或内网。需要接入内网的 Ollama 等服务时再开启。',
+    keysEncrypted: 'API Key 已加密存储（VSCHAT_SECRET 已设置）', keysPlain: 'API Key 以明文存储。设置环境变量 VSCHAT_SECRET 可加密保存。',
   },
   en: {
     loginSub: 'Sign in to continue', username: 'Username', password: 'Password', signIn: 'Sign in',
@@ -66,7 +72,13 @@ const I18N = {
     keySet: hint => `Set (${hint}) — leave empty to keep`, keyNotSet: 'Not set', models: 'Models', modelsHint: 'One model ID per line',
     fetchModels: 'Fetch from provider', fetching: 'Fetching…', enabled: 'Enabled', deleteProvider: name => `Delete provider "${name}"?`,
     modelCount: n => `${n} models`, noKey: 'No key', saved: 'Saved',
-    month: 'Month', requests: 'Requests', input: 'Input', output: 'Output', total: 'Total',
+    month: 'Month', requests: 'Requests', input: 'Input', output: 'Output', total: 'Total', ownKeys: 'Own keys',
+    visibility: 'Who can use it', everyone: 'Everyone', selectedUsers: 'Selected users', usersCount: n => `${n} users`,
+    pickUsers: 'Tick the users who may use it', settings: 'Settings', mine: 'Mine',
+    myModels: 'My models', myModelsSub: 'Add your own API keys. Only you can see and use them, and they don’t count toward your limit.', noOwn: 'No personal providers yet',
+    allowUserKeys: 'Let users add their own API keys', allowUserKeysSub: 'Users can connect their own providers under “My models”, visible only to them.',
+    allowPrivate: 'Let personal providers reach private networks', allowPrivateSub: 'Off by default so users can’t use the server to reach localhost or your LAN. Turn on for a LAN Ollama and the like.',
+    keysEncrypted: 'API keys are encrypted at rest (VSCHAT_SECRET is set)', keysPlain: 'API keys are stored in plain text. Set VSCHAT_SECRET to encrypt them.',
   },
 };
 const store = {
@@ -106,6 +118,8 @@ const ICONS = {
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',
+  cube: '<path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
   bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/>',
 };
 function icon(name) {
@@ -218,7 +232,7 @@ function renderMarkdown(el, text, live) {
 /* ================= state ================= */
 const S = {
   me: null, monthTokens: 0, models: [], chats: [], chatId: null, messages: [],
-  model: store.get('model', ''), attachments: [], controller: null, search: '',
+  model: store.get('model', ''), attachments: [], controller: null, search: '', userKeys: false,
 };
 const modelById = id => S.models.find(m => m.id === id);
 
@@ -245,7 +259,7 @@ $('#login-form').addEventListener('submit', async e => {
 async function boot() {
   let me;
   try { me = await api('GET', '/me'); } catch { return; }
-  S.me = me.user; S.monthTokens = me.month_tokens;
+  S.me = me.user; S.monthTokens = me.month_tokens; S.userKeys = me.user_keys;
   $('#login').hidden = true;
   $('#app').hidden = false;
   $('#user-name').textContent = S.me.username;
@@ -264,7 +278,7 @@ async function loadModels() {
 
 function renderModelLabel() {
   const m = modelById(S.model);
-  $('#model-label').innerHTML = m ? `${esc(m.model)} <span class="sub">· ${esc(m.provider)}</span>` : esc(t('noModel'));
+  $('#model-label').innerHTML = m ? `${esc(m.model)} <span class="sub">· ${esc(m.own ? t('mine') + ' · ' + m.provider : m.provider)}</span>` : esc(t('noModel'));
 }
 
 function setModel(id) {
@@ -288,7 +302,8 @@ function openModelMenu() {
     let group = null;
     for (const m of S.models) {
       if (q && !(m.model + ' ' + m.provider).toLowerCase().includes(q)) continue;
-      if (m.provider !== group) { group = m.provider; html += `<div class="menu-label">${esc(group)}</div>`; }
+      const g = m.own ? `${t('mine')} · ${m.provider}` : m.provider;
+      if (g !== group) { group = g; html += `<div class="menu-label">${esc(group)}</div>`; }
       html += `<button class="menu-item" data-id="${esc(m.id)}"><span class="kind-dot" style="background:${providerColor(m.provider, m.kind)}"></span>
         <span>${esc(m.model)}</span>${m.id === S.model ? `<span class="check-mark">${icon('check')}</span>` : ''}</button>`;
     }
@@ -782,6 +797,7 @@ $('#user-btn').onclick = () => {
     <div class="menu-item">${icon('globe')}<span>${esc(t('language'))}</span><span class="seg" data-seg="lang">
       <button data-v="zh" class="${lang === 'zh' ? 'on' : ''}">中文</button><button data-v="en" class="${lang === 'en' ? 'on' : ''}">EN</button></span></div>
     <div class="menu-sep"></div>
+    ${S.userKeys ? `<button class="menu-item" data-act="mine">${icon('cube')}<span>${esc(t('myModels'))}</span></button>` : ''}
     <button class="menu-item" data-act="password">${icon('key')}<span>${esc(t('changePassword'))}</span></button>
     ${S.me.is_admin ? `<button class="menu-item" data-act="admin">${icon('shield')}<span>${esc(t('admin'))}</span></button>` : ''}
     <div class="menu-sep"></div>
@@ -801,6 +817,7 @@ $('#user-btn').onclick = () => {
     if (act === 'logout') { await api('POST', '/logout').catch(() => {}); location.hash = ''; showLogin(); }
     else if (act === 'password') changePasswordDialog();
     else if (act === 'admin') openAdmin();
+    else if (act === 'mine') openMyModels();
   };
 };
 
@@ -828,13 +845,14 @@ function openAdmin() {
   const tabs = h(`<div class="tabs">
     <button class="tab" data-tab="users">${esc(t('users'))}</button>
     <button class="tab" data-tab="providers">${esc(t('providers'))}</button>
-    <button class="tab" data-tab="usage">${esc(t('usage'))}</button></div>`);
+    <button class="tab" data-tab="usage">${esc(t('usage'))}</button>
+    <button class="tab" data-tab="settings">${esc(t('settings'))}</button></div>`);
   dlg.querySelector('.modal-head').after(tabs);
   dlg.querySelector('.modal-body').style.paddingTop = '18px';
   const show = name => {
     tabs.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
     store.set('adminTab', name);
-    ({ users: adminUsers, providers: adminProviders, usage: adminUsage })[name](body);
+    ({ users: adminUsers, providers: adminProviders, usage: adminUsage, settings: adminSettings })[name](body);
   };
   tabs.onclick = e => { const b = e.target.closest('[data-tab]'); if (b) show(b.dataset.tab); };
   show(store.get('adminTab', 'providers'));
@@ -891,32 +909,54 @@ function userForm(u, done) {
   const dlg = openModal({ title: u ? t('editUser') : t('addUser'), body: form, foot: [button(t('cancel'), '', () => dlg.close()), button(t('save'), 'btn-primary', submit)] });
 }
 
-async function adminProviders(body) {
-  const ps = await api('GET', '/admin/providers');
-  body.innerHTML = `<div class="row"><div class="grow"></div><button class="btn btn-primary btn-sm" data-add>${icon('plus')}${esc(t('addProvider'))}</button></div>
-    <div class="prov-list">${ps.map(p => `<div class="prov" data-id="${p.id}">
-      <div class="prov-logo" style="background:${providerColor(p.name, p.kind)}">${esc(p.name.slice(0, 1).toUpperCase())}</div>
-      <div class="prov-info">
-        <div class="prov-name">${esc(p.name)}<span class="badge">${esc(p.kind === 'anthropic' ? 'Anthropic' : 'OpenAI API')}</span>
-          ${p.has_key ? '' : `<span class="badge danger">${esc(t('noKey'))}</span>`}</div>
-        <div class="prov-sub">${esc(t('modelCount', p.models.length))} · ${esc(p.base_url || '')}</div>
-      </div>
-      <label class="switch" title="${esc(t('enabled'))}"><input type="checkbox" data-toggle ${p.enabled ? 'checked' : ''}><span></span></label>
-      <button class="icon-btn" data-edit>${icon('edit')}</button></div>`).join('')}</div>`;
+// Provider lists come in two flavours: shared ones in the admin panel and the
+// user's own under "My models". They differ only in API base and sharing fields.
+const SHARED = { base: '/admin/providers', shared: true };
+const OWN = { base: '/my/providers', shared: false };
+
+function providerCards(ps, scope) {
+  if (!ps.length) return scope.shared ? '' : `<div class="empty-state">${esc(t('noOwn'))}</div>`;
+  return `<div class="prov-list">${ps.map(p => `<div class="prov" data-id="${p.id}">
+    <div class="prov-logo" style="background:${providerColor(p.name, p.kind)}">${esc(p.name.slice(0, 1).toUpperCase())}</div>
+    <div class="prov-info">
+      <div class="prov-name">${esc(p.name)}<span class="badge">${esc(p.kind === 'anthropic' ? 'Anthropic' : 'OpenAI API')}</span>
+        ${scope.shared && p.visibility === 'users' ? `<span class="badge accent">${esc(t('usersCount', p.user_ids.length))}</span>` : ''}
+        ${p.key_error ? `<span class="badge danger" title="${esc(p.key_error)}">${esc(t('noKey'))}</span>` : p.has_key ? '' : `<span class="badge danger">${esc(t('noKey'))}</span>`}</div>
+      <div class="prov-sub">${esc(t('modelCount', p.models.length))} · ${esc(p.base_url || (p.kind === 'anthropic' ? 'api.anthropic.com' : 'api.openai.com'))}</div>
+    </div>
+    <label class="switch" title="${esc(t('enabled'))}"><input type="checkbox" data-toggle ${p.enabled ? 'checked' : ''}><span></span></label>
+    <button class="icon-btn" data-edit>${icon('edit')}</button></div>`).join('')}</div>`;
+}
+
+async function providerList(body, scope) {
+  const [ps, users] = await Promise.all([api('GET', scope.base), scope.shared ? api('GET', '/admin/users') : []]);
+  const reload = () => providerList(body, scope);
+  body.innerHTML = `${scope.shared ? '' : `<p style="margin:0;color:var(--text-2);font-size:14px">${esc(t('myModelsSub'))}</p>`}
+    <div class="row"><div class="grow"></div><button class="btn btn-primary btn-sm" data-add>${icon('plus')}${esc(t('addProvider'))}</button></div>
+    ${providerCards(ps, scope)}`;
   body.onclick = e => {
-    if (e.target.closest('[data-add]')) return providerForm(null, () => adminProviders(body));
+    if (e.target.closest('[data-add]')) return providerForm(null, scope, users, reload);
     const card = e.target.closest('.prov');
-    if (card && e.target.closest('[data-edit]')) providerForm(ps.find(p => p.id === +card.dataset.id), () => adminProviders(body));
+    if (card && e.target.closest('[data-edit]')) providerForm(ps.find(p => p.id === +card.dataset.id), scope, users, reload);
   };
   body.onchange = async e => {
     if (!e.target.matches('[data-toggle]')) return;
     const p = ps.find(x => x.id === +e.target.closest('.prov').dataset.id);
     p.enabled = e.target.checked;
-    await api('PUT', `/admin/providers/${p.id}`, { name: p.name, kind: p.kind, base_url: p.base_url, models: p.models, enabled: p.enabled, sort: p.sort });
+    await api('PUT', `${scope.base}/${p.id}`, { name: p.name, kind: p.kind, base_url: p.base_url, models: p.models,
+      enabled: p.enabled, sort: p.sort, visibility: p.visibility, user_ids: p.user_ids });
   };
 }
 
-function providerForm(p, done) {
+const adminProviders = body => providerList(body, SHARED);
+
+function openMyModels() {
+  const body = h('<div style="display:flex;flex-direction:column;gap:14px"></div>');
+  openModal({ title: t('myModels'), body, wide: true, onClose: () => loadModels().then(renderMessages) });
+  providerList(body, OWN);
+}
+
+function providerForm(p, scope, users, done) {
   const form = h(`<form style="display:flex;flex-direction:column;gap:14px">
     <div class="row">
       <label class="field"><span>${esc(t('name'))}</span><input name="name" required></label>
@@ -928,7 +968,10 @@ function providerForm(p, done) {
       placeholder="${p?.has_key ? esc(t('keySet', p.key_hint || '••••')) : esc(t('keyNotSet'))}"></label>
     <label class="field"><span>${esc(t('models'))} <small>${esc(t('modelsHint'))}</small></span><textarea name="models" rows="5"></textarea></label>
     <div><button type="button" class="btn btn-sm" data-fetch>${icon('refresh')}<span>${esc(t('fetchModels'))}</span></button></div>
-    <div class="model-picks" hidden></div>
+    <div class="model-picks" data-picks hidden></div>
+    ${scope.shared ? `<label class="field"><span>${esc(t('visibility'))}</span><select name="visibility">
+        <option value="all">${esc(t('everyone'))}</option><option value="users">${esc(t('selectedUsers'))}</option></select></label>
+      <div class="model-picks" data-users hidden></div>` : ''}
     <label class="check"><input type="checkbox" name="enabled"><span>${esc(t('enabled'))}</span></label>
     <div class="form-error"></div></form>`);
   form.name.value = p?.name || '';
@@ -938,18 +981,31 @@ function providerForm(p, done) {
   form.enabled.checked = p ? p.enabled : true;
   const syncPlaceholder = () => { form.base_url.placeholder = form.kind.value === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'; };
   form.kind.onchange = syncPlaceholder; syncPlaceholder();
+  const userBox = form.querySelector('[data-users]');
+  if (userBox) {
+    const allowed = new Set(p?.user_ids || []);
+    userBox.innerHTML = `<div style="width:100%;font:12px var(--font);color:var(--muted)">${esc(t('pickUsers'))}</div>` +
+      users.map(u => `<label><input type="checkbox" value="${u.id}" ${allowed.has(u.id) ? 'checked' : ''}>${esc(u.username)}</label>`).join('');
+    form.visibility.value = p?.visibility || 'all';
+    const syncUsers = () => { userBox.hidden = form.visibility.value !== 'users'; };
+    form.visibility.onchange = syncUsers; syncUsers();
+  }
   const err = form.querySelector('.form-error');
   const values = () => {
     const v = { name: form.name.value, kind: form.kind.value, base_url: form.base_url.value, models: form.models.value.split('\n'), enabled: form.enabled.checked, sort: p?.sort || 0 };
     if (form.api_key.value) v.api_key = form.api_key.value;
+    if (userBox) {
+      v.visibility = form.visibility.value;
+      v.user_ids = [...userBox.querySelectorAll('input:checked')].map(i => +i.value);
+    }
     return v;
   };
   form.querySelector('[data-fetch]').onclick = async e => {
     const b = e.currentTarget; const label = b.querySelector('span');
     b.disabled = true; label.textContent = t('fetching'); err.textContent = '';
     try {
-      const list = await api('POST', `/admin/providers/${p?.id || 0}/models`, values());
-      const picks = form.querySelector('.model-picks');
+      const list = await api('POST', `${scope.base}/${p?.id || 0}/models`, values());
+      const picks = form.querySelector('[data-picks]');
       const current = new Set(form.models.value.split('\n').map(s => s.trim()).filter(Boolean));
       picks.innerHTML = list.map(m => `<label><input type="checkbox" value="${esc(m)}" ${current.has(m) ? 'checked' : ''}>${esc(m)}</label>`).join('');
       picks.hidden = !list.length;
@@ -964,7 +1020,7 @@ function providerForm(p, done) {
   const submit = async () => {
     if (!form.reportValidity()) return;
     try {
-      if (p) await api('PUT', `/admin/providers/${p.id}`, values()); else await api('POST', '/admin/providers', values());
+      if (p) await api('PUT', `${scope.base}/${p.id}`, values()); else await api('POST', scope.base, values());
       dlg.close(); toast(t('saved')); done();
     } catch (e) { err.textContent = e.message; }
   };
@@ -972,7 +1028,7 @@ function providerForm(p, done) {
   const foot = [button(t('cancel'), '', () => dlg.close()), button(t('save'), 'btn-primary', submit)];
   if (p) {
     const del = button(t('delete'), 'btn-danger', async () => {
-      if (await confirmDialog(t('deleteProvider', p.name))) { await api('DELETE', `/admin/providers/${p.id}`); dlg.close(); done(); }
+      if (await confirmDialog(t('deleteProvider', p.name))) { await api('DELETE', `${scope.base}/${p.id}`); dlg.close(); done(); }
     });
     del.style.marginRight = 'auto';
     foot.unshift(del);
@@ -980,15 +1036,34 @@ function providerForm(p, done) {
   const dlg = openModal({ title: p ? t('editProvider') : t('addProvider'), body: form, foot });
 }
 
+async function adminSettings(body) {
+  const st = await api('GET', '/admin/settings');
+  const opt = (key, title, sub) => `<label class="setting"><span class="setting-text"><strong>${esc(title)}</strong><small>${esc(sub)}</small></span>
+    <span class="switch"><input type="checkbox" data-key="${key}" ${st[key] ? 'checked' : ''}><span></span></span></label>`;
+  body.innerHTML = `<div class="settings">
+    ${opt('allow_user_keys', t('allowUserKeys'), t('allowUserKeysSub'))}
+    ${opt('allow_private_network', t('allowPrivate'), t('allowPrivateSub'))}</div>
+    <div class="notice${st.keys_encrypted ? ' ok' : ''}">${icon(st.keys_encrypted ? 'shield' : 'alert')}<span>${esc(st.keys_encrypted ? t('keysEncrypted') : t('keysPlain'))}</span></div>`;
+  body.onclick = null;
+  body.onchange = async e => {
+    const k = e.target.dataset.key;
+    if (!k) return;
+    const res = await api('PUT', '/admin/settings', { [k]: e.target.checked });
+    if (k === 'allow_user_keys') S.userKeys = res.allow_user_keys;
+    toast(t('saved'));
+  };
+}
+
 async function adminUsage(body, m) {
   const data = await api('GET', '/admin/usage' + (m ? `?month=${encodeURIComponent(m)}` : ''));
   const max = Math.max(1, ...data.rows.map(r => r.token_limit || r.tokens_in + r.tokens_out));
   body.innerHTML = `<div class="row"><label class="field" style="flex:none"><span>${esc(t('month'))}</span><input type="month" value="${esc(data.month)}"></label></div>
     <div class="table-wrap"><table class="table"><thead><tr><th>${esc(t('username'))}</th><th>${esc(t('requests'))}</th>
-      <th>${esc(t('input'))}</th><th>${esc(t('output'))}</th><th>${esc(t('total'))}</th><th style="width:28%"></th></tr></thead><tbody>
+      <th>${esc(t('input'))}</th><th>${esc(t('output'))}</th><th>${esc(t('total'))}</th><th>${esc(t('ownKeys'))}</th><th style="width:24%"></th></tr></thead><tbody>
     ${data.rows.map(r => { const tot = r.tokens_in + r.tokens_out; const cap = r.token_limit || max;
       return `<tr><td><strong>${esc(r.username)}</strong></td><td>${r.requests}</td><td>${fmtTokens(r.tokens_in)}</td><td>${fmtTokens(r.tokens_out)}</td>
       <td><strong>${fmtTokens(tot)}</strong>${r.token_limit ? ` <small style="color:var(--muted)">/ ${fmtTokens(r.token_limit)}</small>` : ''}</td>
+      <td style="color:var(--muted)">${r.own_tokens ? fmtTokens(r.own_tokens) : '—'}</td>
       <td><div class="bar"><i style="width:${Math.min(100, tot / cap * 100).toFixed(1)}%"></i></div></td></tr>`; }).join('')}
     </tbody></table></div>`;
   body.onclick = null;

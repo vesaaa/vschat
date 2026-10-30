@@ -45,31 +45,32 @@ type ModelOption struct {
 	Model    string `json:"model"`
 	Provider string `json:"provider"`
 	Kind     string `json:"kind"`
+	Own      bool   `json:"own"` // on the user's own key
 }
 
-func (a *App) modelOptions() []ModelOption {
-	ps, _ := a.store.ListProviders()
+func (a *App) modelOptions(u *User) []ModelOption {
+	ps, _ := a.store.UsableProviders(u.ID)
 	out := []ModelOption{}
 	for _, p := range ps {
-		if !p.Enabled || p.APIKey == "" {
+		if !a.canUse(u, p) || p.APIKey == "" {
 			continue
 		}
 		for _, m := range p.Models {
-			out = append(out, ModelOption{ID: fmt.Sprintf("%d/%s", p.ID, m), Model: m, Provider: p.Name, Kind: p.Kind})
+			out = append(out, ModelOption{ID: fmt.Sprintf("%d/%s", p.ID, m), Model: m, Provider: p.Name, Kind: p.Kind, Own: p.OwnerID != 0})
 		}
 	}
 	return out
 }
 
-func (a *App) resolveModel(ref string) (*Provider, string, error) {
+func (a *App) resolveModel(u *User, ref string) (*Provider, string, error) {
 	pid, model, ok := strings.Cut(ref, "/")
 	if !ok {
 		return nil, "", fmt.Errorf("unknown model")
 	}
 	id, _ := strconv.ParseInt(pid, 10, 64)
 	p, err := a.store.Provider(id)
-	if err != nil || !p.Enabled {
-		return nil, "", fmt.Errorf("model provider not available")
+	if err != nil || !a.canUse(u, p) {
+		return nil, "", fmt.Errorf("model not available")
 	}
 	for _, m := range p.Models {
 		if m == model {
@@ -80,7 +81,7 @@ func (a *App) resolveModel(ref string) (*Provider, string, error) {
 }
 
 func (a *App) handleModels(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, a.modelOptions())
+	writeJSON(w, a.modelOptions(currentUser(r)))
 }
 
 func (a *App) handleListChats(w http.ResponseWriter, r *http.Request) {
@@ -164,12 +165,13 @@ func (a *App) handleSend(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	p, model, err := a.resolveModel(req.Model)
+	p, model, err := a.resolveModel(u, req.Model)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if u.TokenLimit > 0 {
+	own := p.OwnerID != 0
+	if u.TokenLimit > 0 && !own {
 		if used, _ := a.store.MonthTokens(u.ID); used >= u.TokenLimit {
 			writeErr(w, 429, "monthly token limit reached")
 			return
@@ -302,7 +304,7 @@ loop:
 		log.Printf("save reply: %v", err)
 	}
 	if res.In+res.Out > 0 {
-		a.store.AddUsage(u.ID, res.In, res.Out)
+		a.store.AddUsage(u.ID, res.In, res.Out, own)
 	}
 	if !interrupted {
 		send(map[string]any{"type": "done", "message": reply})

@@ -115,6 +115,14 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/providers/{id}", a.requireAdmin(a.handleDeleteProvider))
 	mux.HandleFunc("POST /api/admin/providers/{id}/models", a.requireAdmin(a.handleRemoteModels))
 	mux.HandleFunc("GET /api/admin/usage", a.requireAdmin(a.handleUsage))
+	mux.HandleFunc("GET /api/admin/settings", a.requireAdmin(a.handleGetSettings))
+	mux.HandleFunc("PUT /api/admin/settings", a.requireAdmin(a.handlePutSettings))
+
+	mux.HandleFunc("GET /api/my/providers", a.requireUserKeys(a.handleListOwn))
+	mux.HandleFunc("POST /api/my/providers", a.requireUserKeys(a.handleCreateOwn))
+	mux.HandleFunc("PUT /api/my/providers/{id}", a.requireUserKeys(a.handleUpdateOwn))
+	mux.HandleFunc("DELETE /api/my/providers/{id}", a.requireUserKeys(a.handleDeleteOwn))
+	mux.HandleFunc("POST /api/my/providers/{id}/models", a.requireUserKeys(a.handleOwnRemoteModels))
 
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok", "version": version})
@@ -152,6 +160,10 @@ func main() {
 	}
 	store, err := openStore(filepath.Join(dataDir, "vschat.db"))
 	if err != nil {
+		log.Fatal(err)
+	}
+	store.box = newSealer(os.Getenv("VSCHAT_SECRET"))
+	if err := store.SealKeys(); err != nil {
 		log.Fatal(err)
 	}
 	app := &App{store: store, limiter: &loginLimiter{fail: map[string][]time.Time{}}}

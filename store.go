@@ -35,6 +35,15 @@ CREATE TABLE IF NOT EXISTS providers (
 	enabled  INTEGER NOT NULL DEFAULT 1,
 	sort     INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS provider_users (
+	provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+	user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	PRIMARY KEY (provider_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS chats (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -69,7 +78,18 @@ CREATE TABLE IF NOT EXISTS usage (
 );
 `
 
-type Store struct{ db *sql.DB }
+// columns added after v0.1; applied to existing databases on start.
+var migrations = []struct{ table, column, def string }{
+	{"providers", "owner_id", "INTEGER NOT NULL DEFAULT 0"},    // 0 = shared, else the user who owns it
+	{"providers", "visibility", "TEXT NOT NULL DEFAULT 'all'"}, // shared providers: "all" or "users"
+	{"usage", "own_in", "INTEGER NOT NULL DEFAULT 0"},          // tokens on users' own keys
+	{"usage", "own_out", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+type Store struct {
+	db  *sql.DB
+	box *sealer
+}
 
 type User struct {
 	ID         int64  `json:"id"`
@@ -82,14 +102,19 @@ type User struct {
 }
 
 type Provider struct {
-	ID      int64    `json:"id"`
-	Name    string   `json:"name"`
-	Kind    string   `json:"kind"` // "openai" (OpenAI-compatible) or "anthropic"
-	BaseURL string   `json:"base_url"`
-	APIKey  string   `json:"api_key,omitempty"`
-	Models  []string `json:"models"`
-	Enabled bool     `json:"enabled"`
-	Sort    int64    `json:"sort"`
+	ID         int64    `json:"id"`
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"` // "openai" (OpenAI-compatible) or "anthropic"
+	BaseURL    string   `json:"base_url"`
+	APIKey     string   `json:"api_key,omitempty"`
+	Models     []string `json:"models"`
+	Enabled    bool     `json:"enabled"`
+	Sort       int64    `json:"sort"`
+	OwnerID    int64    `json:"owner_id"`   // 0 = shared provider managed by admins
+	Visibility string   `json:"visibility"` // shared only: "all" or "users"
+	UserIDs    []int64  `json:"user_ids"`   // who may use it when Visibility is "users"
+	KeyErr     error    `json:"-"`          // key could not be decrypted
+	guard      bool     // block private-network targets (users' own providers)
 }
 
 type Chat struct {
@@ -126,6 +151,7 @@ type UsageRow struct {
 	Username  string `json:"username"`
 	TokensIn  int64  `json:"tokens_in"`
 	TokensOut int64  `json:"tokens_out"`
+	OwnTokens int64  `json:"own_tokens"` // on the user's own keys, not counted against the limit
 	Requests  int64  `json:"requests"`
 	Limit     int64  `json:"token_limit"`
 }
@@ -141,7 +167,55 @@ func openStore(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	for _, m := range migrations {
+		var n int
+		db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, m.table, m.column).Scan(&n)
+		if n == 0 {
+			if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, m.table, m.column, m.def)); err != nil {
+				return nil, fmt.Errorf("migrate %s.%s: %w", m.table, m.column, err)
+			}
+		}
+	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS providers_owner ON providers(owner_id)`)
 	return &Store{db: db}, nil
+}
+
+// SealKeys encrypts any plain-text API keys once a secret is configured.
+func (s *Store) SealKeys() error {
+	if s.box == nil {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT id, api_key FROM providers WHERE api_key<>'' AND api_key NOT LIKE 'enc:%'`)
+	if err != nil {
+		return err
+	}
+	keys := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var k string
+		rows.Scan(&id, &k)
+		keys[id] = k
+	}
+	rows.Close()
+	for id, k := range keys {
+		if _, err := s.db.Exec(`UPDATE providers SET api_key=? WHERE id=?`, s.box.seal(k), id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- settings ---
+
+func (s *Store) Setting(key string) string {
+	var v string
+	s.db.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&v)
+	return v
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(`INSERT INTO settings(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	return err
 }
 
 func now() int64 { return time.Now().Unix() }
@@ -220,6 +294,9 @@ func (s *Store) SetPassword(id int64, hash string) error {
 }
 
 func (s *Store) DeleteUser(id int64) error {
+	if _, err := s.db.Exec(`DELETE FROM providers WHERE owner_id=?`, id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`DELETE FROM users WHERE id=?`, id)
 	return err
 }
@@ -268,52 +345,107 @@ func splitModels(s string) []string {
 	return out
 }
 
-func (s *Store) ListProviders() ([]*Provider, error) {
-	rows, err := s.db.Query(`SELECT id, name, kind, base_url, api_key, models, enabled, sort FROM providers ORDER BY sort, id`)
+const providerCols = `id, name, kind, base_url, api_key, models, enabled, sort, owner_id, visibility`
+
+func (s *Store) queryProviders(where string, args ...any) ([]*Provider, error) {
+	rows, err := s.db.Query(`SELECT `+providerCols+` FROM providers `+where+` ORDER BY sort, id`, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []*Provider
+	byID := map[int64]*Provider{}
 	for rows.Next() {
 		var p Provider
 		var models string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &models, &p.Enabled, &p.Sort); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &models, &p.Enabled, &p.Sort, &p.OwnerID, &p.Visibility); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		p.Models = splitModels(models)
+		p.APIKey, p.KeyErr = s.box.open(p.APIKey)
+		p.UserIDs = []int64{}
 		out = append(out, &p)
+		byID[p.ID] = &p
 	}
-	return out, rows.Err()
-}
-
-func (s *Store) Provider(id int64) (*Provider, error) {
-	ps, err := s.ListProviders()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	links, err := s.db.Query(`SELECT provider_id, user_id FROM provider_users ORDER BY user_id`)
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range ps {
-		if p.ID == id {
-			return p, nil
+	defer links.Close()
+	for links.Next() {
+		var pid, uid int64
+		links.Scan(&pid, &uid)
+		if p := byID[pid]; p != nil {
+			p.UserIDs = append(p.UserIDs, uid)
 		}
 	}
-	return nil, errNotFound
+	return out, links.Err()
+}
+
+// SharedProviders are the admin-managed ones.
+func (s *Store) SharedProviders() ([]*Provider, error) {
+	return s.queryProviders(`WHERE owner_id=0`)
+}
+
+// UsableProviders are the shared ones plus the user's own.
+func (s *Store) UsableProviders(userID int64) ([]*Provider, error) {
+	return s.queryProviders(`WHERE owner_id=0 OR owner_id=?`, userID)
+}
+
+func (s *Store) OwnProviders(userID int64) ([]*Provider, error) {
+	return s.queryProviders(`WHERE owner_id=?`, userID)
+}
+
+func (s *Store) Provider(id int64) (*Provider, error) {
+	ps, err := s.queryProviders(`WHERE id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(ps) == 0 {
+		return nil, errNotFound
+	}
+	return ps[0], nil
 }
 
 func (s *Store) SaveProvider(p *Provider) error {
 	models := strings.Join(p.Models, "\n")
+	if p.Visibility == "" {
+		p.Visibility = "all"
+	}
+	key := s.box.seal(p.APIKey)
+	if p.KeyErr != nil && p.APIKey == "" && p.ID != 0 {
+		// Undecryptable key and no replacement: keep what is stored.
+		s.db.QueryRow(`SELECT api_key FROM providers WHERE id=?`, p.ID).Scan(&key)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	if p.ID == 0 {
-		res, err := s.db.Exec(`INSERT INTO providers(name, kind, base_url, api_key, models, enabled, sort) VALUES(?,?,?,?,?,?,?)`,
-			p.Name, p.Kind, p.BaseURL, p.APIKey, models, b2i(p.Enabled), p.Sort)
+		res, err := tx.Exec(`INSERT INTO providers(name, kind, base_url, api_key, models, enabled, sort, owner_id, visibility) VALUES(?,?,?,?,?,?,?,?,?)`,
+			p.Name, p.Kind, p.BaseURL, key, models, b2i(p.Enabled), p.Sort, p.OwnerID, p.Visibility)
 		if err != nil {
 			return err
 		}
 		p.ID, _ = res.LastInsertId()
-		return nil
+	} else if _, err := tx.Exec(`UPDATE providers SET name=?, kind=?, base_url=?, api_key=?, models=?, enabled=?, sort=?, visibility=? WHERE id=?`,
+		p.Name, p.Kind, p.BaseURL, key, models, b2i(p.Enabled), p.Sort, p.Visibility, p.ID); err != nil {
+		return err
 	}
-	_, err := s.db.Exec(`UPDATE providers SET name=?, kind=?, base_url=?, api_key=?, models=?, enabled=?, sort=? WHERE id=?`,
-		p.Name, p.Kind, p.BaseURL, p.APIKey, models, b2i(p.Enabled), p.Sort, p.ID)
-	return err
+	if _, err := tx.Exec(`DELETE FROM provider_users WHERE provider_id=?`, p.ID); err != nil {
+		return err
+	}
+	for _, uid := range p.UserIDs {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO provider_users(provider_id, user_id) SELECT ?, id FROM users WHERE id=?`, p.ID, uid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteProvider(id int64) error {
@@ -322,7 +454,7 @@ func (s *Store) DeleteProvider(id int64) error {
 }
 
 func (s *Store) CountProviders() (n int, err error) {
-	err = s.db.QueryRow(`SELECT COUNT(*) FROM providers`).Scan(&n)
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM providers WHERE owner_id=0`).Scan(&n)
 	return
 }
 
@@ -416,10 +548,19 @@ func (s *Store) DeleteMessage(id int64) error {
 
 // --- usage ---
 
-func (s *Store) AddUsage(userID, in, out int64) error {
-	_, err := s.db.Exec(`INSERT INTO usage(user_id, month, tokens_in, tokens_out, requests) VALUES(?,?,?,?,1)
-		ON CONFLICT(user_id, month) DO UPDATE SET tokens_in=tokens_in+excluded.tokens_in, tokens_out=tokens_out+excluded.tokens_out, requests=requests+1`,
-		userID, month(), in, out)
+// AddUsage records a request. Tokens on the user's own key (own=true) are kept
+// apart so they never count against the admin-set limit.
+func (s *Store) AddUsage(userID, in, out int64, own bool) error {
+	var sin, sout, oin, oout int64
+	if own {
+		oin, oout = in, out
+	} else {
+		sin, sout = in, out
+	}
+	_, err := s.db.Exec(`INSERT INTO usage(user_id, month, tokens_in, tokens_out, own_in, own_out, requests) VALUES(?,?,?,?,?,?,1)
+		ON CONFLICT(user_id, month) DO UPDATE SET tokens_in=tokens_in+excluded.tokens_in, tokens_out=tokens_out+excluded.tokens_out,
+		own_in=own_in+excluded.own_in, own_out=own_out+excluded.own_out, requests=requests+1`,
+		userID, month(), sin, sout, oin, oout)
 	return err
 }
 
@@ -429,7 +570,7 @@ func (s *Store) MonthTokens(userID int64) (n int64, err error) {
 }
 
 func (s *Store) Usage(m string) ([]UsageRow, error) {
-	rows, err := s.db.Query(`SELECT u.id, u.username, COALESCE(g.tokens_in,0), COALESCE(g.tokens_out,0), COALESCE(g.requests,0), u.token_limit
+	rows, err := s.db.Query(`SELECT u.id, u.username, COALESCE(g.tokens_in,0), COALESCE(g.tokens_out,0), COALESCE(g.own_in+g.own_out,0), COALESCE(g.requests,0), u.token_limit
 		FROM users u LEFT JOIN usage g ON g.user_id=u.id AND g.month=? ORDER BY COALESCE(g.tokens_in+g.tokens_out,0) DESC, u.id`, m)
 	if err != nil {
 		return nil, err
@@ -438,7 +579,7 @@ func (s *Store) Usage(m string) ([]UsageRow, error) {
 	out := []UsageRow{}
 	for rows.Next() {
 		var r UsageRow
-		if err := rows.Scan(&r.UserID, &r.Username, &r.TokensIn, &r.TokensOut, &r.Requests, &r.Limit); err != nil {
+		if err := rows.Scan(&r.UserID, &r.Username, &r.TokensIn, &r.TokensOut, &r.OwnTokens, &r.Requests, &r.Limit); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

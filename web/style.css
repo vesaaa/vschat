@@ -369,6 +369,14 @@ kbd { font: 11px var(--mono); color: var(--muted); border: 1px solid var(--borde
 .model-picks { display: flex; flex-wrap: wrap; gap: 6px; max-height: 200px; overflow-y: auto; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
 .model-picks label { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--bg-soft); font: 12px var(--mono); cursor: pointer; }
 .model-picks input { accent-color: var(--accent); margin: 0; }
+.settings { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.setting { display: flex; align-items: center; gap: 16px; padding: 16px 18px; cursor: pointer; }
+.setting + .setting { border-top: 1px solid var(--border); }
+.setting-text { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.setting-text strong { font-weight: 500; font-size: 14px; }
+.setting-text small { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.notice.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
+.model-picks[data-users] label { font-family: var(--font); font-size: 13px; }
 .empty-state { color: var(--muted); text-align: center; padding: 28px; font-size: 14px; }
 
 /* ---------- toasts ---------- */

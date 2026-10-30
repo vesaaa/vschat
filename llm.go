@@ -51,6 +51,9 @@ func userText(m *Message) string {
 }
 
 func (p *Provider) Stream(ctx context.Context, model string, history []*Message, sink Sink) (Result, error) {
+	if p.KeyErr != nil {
+		return Result{}, p.KeyErr
+	}
 	if p.APIKey == "" {
 		return Result{}, errors.New("API key not configured for " + p.Name)
 	}
@@ -72,7 +75,7 @@ func (p *Provider) ListRemoteModels(ctx context.Context) ([]string, error) {
 	}
 	req, _ := http.NewRequestWithContext(ctx, "GET", p.openAIBase()+"/models", nil)
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := p.httpClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +139,7 @@ func (p *Provider) streamOpenAI(ctx context.Context, model string, history []*Me
 	req, _ := http.NewRequestWithContext(ctx, "POST", p.openAIBase()+"/chat/completions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := p.httpClient().Do(req)
 	if err != nil {
 		return Result{}, err
 	}
@@ -219,6 +222,7 @@ func (p *Provider) anthropicClient() anthropic.Client {
 	return anthropic.NewClient(
 		option.WithBaseURL(p.anthropicBase()),
 		option.WithAPIKey(p.APIKey),
+		option.WithHTTPClient(p.httpClient()),
 		option.WithRequestTimeout(30*time.Minute),
 	)
 }
