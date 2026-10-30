@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>VsChat</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script>
+  try { const t = localStorage.getItem('vschat.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}
+</script>
+</head>
+<body>
+
+<div id="login" class="login" hidden>
+  <form class="login-card" id="login-form" autocomplete="on">
+    <div class="brand brand-lg"><span class="logo"></span><span>VsChat</span></div>
+    <p class="login-sub" data-i18n="loginSub"></p>
+    <label class="field"><span data-i18n="username"></span>
+      <input name="username" autocomplete="username" required autofocus></label>
+    <label class="field"><span data-i18n="password"></span>
+      <input name="password" type="password" autocomplete="current-password" required></label>
+    <div class="form-error" id="login-error"></div>
+    <button class="btn btn-primary btn-block" type="submit" data-i18n="signIn"></button>
+  </form>
+</div>
+
+<div id="app" class="app" hidden>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <div class="brand"><span class="logo"></span><span>VsChat</span></div>
+      <button class="icon-btn only-mobile" id="close-sidebar" data-icon="x"></button>
+    </div>
+    <button class="new-chat" id="new-chat"><i data-icon="plus"></i><span data-i18n="newChat"></span><kbd>Ctrl K</kbd></button>
+    <div class="search"><i data-icon="search"></i><input id="chat-search" data-i18n-ph="search"></div>
+    <nav class="chat-list" id="chat-list"></nav>
+    <div class="sidebar-foot">
+      <button class="user-btn" id="user-btn">
+        <span class="avatar" id="user-avatar"></span>
+        <span class="user-name" id="user-name"></span>
+        <i data-icon="more"></i>
+      </button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main" id="main">
+    <header class="topbar">
+      <button class="icon-btn only-mobile" id="open-sidebar" data-icon="menu"></button>
+      <button class="model-btn" id="model-btn"><span id="model-label"></span><i data-icon="chevron"></i></button>
+      <div class="topbar-title" id="chat-title"></div>
+      <button class="icon-btn only-mobile" id="new-chat-m" data-icon="edit"></button>
+    </header>
+
+    <section class="thread" id="thread">
+      <div class="thread-inner" id="messages"></div>
+      <div class="welcome" id="welcome">
+        <div class="logo logo-xl"></div>
+        <h1 id="welcome-title"></h1>
+      </div>
+    </section>
+    <button class="to-bottom" id="to-bottom" data-icon="down" hidden></button>
+
+    <footer class="composer-wrap">
+      <form class="composer" id="composer">
+        <div class="attachments" id="attachments"></div>
+        <textarea id="input" rows="1" data-i18n-ph="placeholder"></textarea>
+        <div class="composer-bar">
+          <button type="button" class="icon-btn" id="attach-btn" data-icon="clip" data-i18n-title="attach"></button>
+          <input type="file" id="file-input" multiple hidden>
+          <span class="hint" data-i18n="hint"></span>
+          <button type="submit" class="send-btn" id="send-btn" data-icon="send"></button>
+        </div>
+      </form>
+      <div class="drop-hint" id="drop-hint"><i data-icon="clip"></i><span data-i18n="dropHint"></span></div>
+    </footer>
+  </main>
+</div>
+
+<div class="popover" id="popover" hidden></div>
+<div class="toasts" id="toasts"></div>
+
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/highlight.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
