@@ -18,8 +18,10 @@ docker run -d --name vschat -p 8080:8080 \
   -v vschat-data:/data \
   -e VSCHAT_ADMIN_PASSWORD=change-me \
   -e VSCHAT_SECRET=a-long-random-string-you-keep \
-  ghcr.io/vesaaa/vschat:latest
+  vsbox/vschat:latest
 ```
+
+The same image is on GitHub as `ghcr.io/vesaaa/vschat`. Tags: `latest` (newest release), `0.3.0`-style versions, `edge` (main branch).
 
 Open http://localhost:8080, sign in as `admin`, then go to **Admin → Providers** and paste your API keys.
 
@@ -32,7 +34,7 @@ If you don't set `VSCHAT_ADMIN_PASSWORD`, a random one is printed in the log on 
 ```yaml
 services:
   vschat:
-    image: ghcr.io/vesaaa/vschat:latest
+    image: vsbox/vschat:latest
     restart: unless-stopped
     ports: ["8080:8080"]
     volumes:
