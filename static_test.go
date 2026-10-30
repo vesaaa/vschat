@@ -1,6 +1,8 @@
 package main
 
 import (
+	"compress/gzip"
+	"io"
 	"net/http/httptest"
 	"regexp"
 	"strings"
@@ -53,5 +55,26 @@ func TestStaticFingerprints(t *testing.T) {
 	}
 	if rec := get("/app.js"); rec.Code != 404 {
 		t.Errorf("unversioned asset still served: %d", rec.Code)
+	}
+
+	// gzip: compressed when accepted, identical once decompressed, never for the API stream
+	plain := get(refs[5][1])
+	zipped := get(refs[5][1], "Accept-Encoding", "gzip, deflate, br")
+	if zipped.Header().Get("Content-Encoding") != "gzip" || zipped.Body.Len() >= plain.Body.Len()/2 {
+		t.Fatalf("app.js gzip: %q %d vs %d", zipped.Header().Get("Content-Encoding"), zipped.Body.Len(), plain.Body.Len())
+	}
+	zr, _ := gzip.NewReader(zipped.Body)
+	un, _ := io.ReadAll(zr)
+	if string(un) != plain.Body.String() || !strings.Contains(zipped.Header().Get("Content-Type"), "javascript") {
+		t.Error("gzip body or type mismatch")
+	}
+	if rec := get("/", "Accept-Encoding", "gzip"); rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Error("index not gzipped")
+	}
+	if rec := get(refs[5][1], "Accept-Encoding", "gzip;q=0"); rec.Header().Get("Content-Encoding") != "" {
+		t.Error("gzip sent despite q=0")
+	}
+	if rec := get("/api/health", "Accept-Encoding", "gzip"); rec.Header().Get("Content-Encoding") != "" {
+		t.Error("api gzipped")
 	}
 }

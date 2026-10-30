@@ -98,6 +98,32 @@ A provider added from the list **follows the built-in model list** by default, s
   Users then get **My models** in their menu. Those providers are private to the user, show up as "Mine" in the model picker, and their tokens are tracked separately (not counted against the monthly limit). Switching to a stricter mode disables personal providers that no longer fit; they're kept and marked.
 - In custom mode, personal providers can't reach `localhost` or private/LAN addresses unless you turn on *Let personal providers reach private networks* (e.g. for a LAN Ollama), so users can't use the server to probe your network.
 
+## Cloudflare Tunnel (no nginx needed)
+
+The simplest public setup: `cloudflared` connects out to Cloudflare and forwards to VsChat, so no port is opened on the server. Streaming replies work through the tunnel, and the visitor's real IP and country are picked up automatically.
+
+```yaml
+services:
+  vschat:
+    image: vsbox/vschat:latest
+    restart: unless-stopped
+    volumes: ["./data:/data"]
+    environment:
+      VSCHAT_ADMIN_PASSWORD: change-me
+      VSCHAT_SECRET: a-long-random-string-you-keep
+    # no "ports:" — only cloudflared talks to it
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: your-tunnel-token   # Zero Trust → Networks → Tunnels
+```
+
+In the tunnel's *Public Hostname* settings point your domain at `http://vschat:8080`. If cloudflared runs on the host instead, publish the port on localhost only (`127.0.0.1:8080:8080`) and use `http://localhost:8080`.
+
+Static files are pre-compressed with gzip, and Cloudflare compresses everything else on its way to the visitor.
+
 ## Client IP behind Cloudflare / a reverse proxy
 
 VsChat records the visitor's IP in the access log and uses it for sign-in rate limiting. With the default `VSCHAT_TRUST_PROXY=auto` it reads `CF-Connecting-IP`, `True-Client-IP`, the first `X-Forwarded-For` hop, then `X-Real-IP` — but only when the request arrives from a Cloudflare edge address, localhost or a private network, so clients hitting the port directly can't fake their IP. Behind Cloudflare the visitor's country (`CF-IPCountry`) is recorded too.
