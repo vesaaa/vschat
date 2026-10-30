@@ -85,7 +85,9 @@ var migrations = []struct{ table, column, def string }{
 	{"providers", "visibility", "TEXT NOT NULL DEFAULT 'all'"}, // shared providers: "all" or "users"
 	{"usage", "own_in", "INTEGER NOT NULL DEFAULT 0"},          // tokens on users' own keys
 	{"usage", "own_out", "INTEGER NOT NULL DEFAULT 0"},
-	{"providers", "preset", "TEXT NOT NULL DEFAULT ''"}, // catalog preset ID; with empty models it follows the catalog
+	{"providers", "preset", "TEXT NOT NULL DEFAULT ''"},       // catalog preset ID; with empty models it follows the catalog
+	{"messages", "think_ms", "INTEGER NOT NULL DEFAULT 0"},    // request start to first answer token
+	{"messages", "duration_ms", "INTEGER NOT NULL DEFAULT 0"}, // request start to end
 }
 
 type Store struct {
@@ -146,6 +148,8 @@ type Message struct {
 	Raw         string       `json:"-"` // provider-native assistant turn, replayed verbatim
 	TokensIn    int64        `json:"tokens_in,omitempty"`
 	TokensOut   int64        `json:"tokens_out,omitempty"`
+	ThinkMs     int64        `json:"think_ms,omitempty"`
+	DurationMs  int64        `json:"duration_ms,omitempty"`
 	Error       string       `json:"error,omitempty"`
 	CreatedAt   int64        `json:"created_at"`
 }
@@ -557,7 +561,7 @@ func (s *Store) DeleteChat(userID, id int64) error {
 // --- messages ---
 
 func (s *Store) Messages(chatID int64) ([]*Message, error) {
-	rows, err := s.db.Query(`SELECT id, chat_id, role, content, reasoning, attachments, model, raw, tokens_in, tokens_out, error, created_at
+	rows, err := s.db.Query(`SELECT id, chat_id, role, content, reasoning, attachments, model, raw, tokens_in, tokens_out, think_ms, duration_ms, error, created_at
 		FROM messages WHERE chat_id=? ORDER BY id`, chatID)
 	if err != nil {
 		return nil, err
@@ -567,7 +571,7 @@ func (s *Store) Messages(chatID int64) ([]*Message, error) {
 	for rows.Next() {
 		var m Message
 		var att string
-		if err := rows.Scan(&m.ID, &m.ChatID, &m.Role, &m.Content, &m.Reasoning, &att, &m.Model, &m.Raw, &m.TokensIn, &m.TokensOut, &m.Error, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.Role, &m.Content, &m.Reasoning, &att, &m.Model, &m.Raw, &m.TokensIn, &m.TokensOut, &m.ThinkMs, &m.DurationMs, &m.Error, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		m.Attachments = decodeAttachments(att)
@@ -578,9 +582,9 @@ func (s *Store) Messages(chatID int64) ([]*Message, error) {
 
 func (s *Store) AddMessage(m *Message) error {
 	m.CreatedAt = now()
-	res, err := s.db.Exec(`INSERT INTO messages(chat_id, role, content, reasoning, attachments, model, raw, tokens_in, tokens_out, error, created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		m.ChatID, m.Role, m.Content, m.Reasoning, encodeAttachments(m.Attachments), m.Model, m.Raw, m.TokensIn, m.TokensOut, m.Error, m.CreatedAt)
+	res, err := s.db.Exec(`INSERT INTO messages(chat_id, role, content, reasoning, attachments, model, raw, tokens_in, tokens_out, think_ms, duration_ms, error, created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		m.ChatID, m.Role, m.Content, m.Reasoning, encodeAttachments(m.Attachments), m.Model, m.Raw, m.TokensIn, m.TokensOut, m.ThinkMs, m.DurationMs, m.Error, m.CreatedAt)
 	if err != nil {
 		return err
 	}

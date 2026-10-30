@@ -11,7 +11,8 @@ const I18N = {
     welcomeNoModelAdmin: '还没有可用的模型，请在「管理后台 → 模型服务」中填入 API Key',
     noModel: '未配置模型', pickModel: '请先选择模型', searchModel: '搜索模型',
     copy: '复制', copied: '已复制', regenerate: '重新生成', rename: '重命名', delete: '删除',
-    thinking: '思考过程', thinkingNow: '思考中…',
+    thinking: '思考过程', thinkingNow: '思考中', thoughtFor: d => `思考了 ${d}`, retry: '重试',
+    secs: n => n < 60 ? `${n} 秒` : `${Math.floor(n / 60)} 分 ${n % 60} 秒`,
     stopped: '已停止生成', refusal: '模型拒绝回答了这个请求', maxTokens: '回答达到长度上限，已被截断',
     errorPrefix: '请求失败：',
     pastedText: '粘贴的文本', lines: n => `${n} 行`, preview: '预览', insertBack: '放回输入框',
@@ -54,7 +55,8 @@ const I18N = {
     welcomeNoModelAdmin: 'No models yet — add an API key in Admin → Providers',
     noModel: 'No model', pickModel: 'Pick a model first', searchModel: 'Search models',
     copy: 'Copy', copied: 'Copied', regenerate: 'Regenerate', rename: 'Rename', delete: 'Delete',
-    thinking: 'Thoughts', thinkingNow: 'Thinking…',
+    thinking: 'Thoughts', thinkingNow: 'Thinking', thoughtFor: d => `Thought for ${d}`, retry: 'Retry',
+    secs: n => n < 60 ? `${n}s` : `${Math.floor(n / 60)}m ${n % 60}s`,
     stopped: 'Generation stopped', refusal: 'The model declined this request', maxTokens: 'Reply hit the length limit and was cut off',
     errorPrefix: 'Request failed: ',
     pastedText: 'Pasted text', lines: n => `${n} lines`, preview: 'Preview', insertBack: 'Put back in message',
@@ -230,11 +232,6 @@ function renderMarkdown(el, text, live) {
       setTimeout(() => { b.innerHTML = `${icon('copy')}<span>${t('copy')}</span>`; }, 1500);
     };
   });
-  if (live) {
-    let last = el.lastElementChild;
-    while (last && last.lastElementChild && !['PRE', 'CODE'].includes(last.tagName)) last = last.lastElementChild;
-    (last && !last.classList.contains('code') ? last : el).classList.add('cursor');
-  }
 }
 
 /* ================= state ================= */
@@ -320,7 +317,7 @@ function openModelMenu() {
     if (!S.models.length) html += `<div class="empty-state">${esc(S.me.is_admin ? t('welcomeNoModelAdmin') : t('welcomeNoModel'))}</div>`;
     return html;
   };
-  const pop = openPopover(btn, render(''), { minWidth: 260 });
+  const pop = openPopover(btn, render(''), { minWidth: 260, above: true });
   pop.addEventListener('click', e => {
     const b = e.target.closest('[data-id]');
     if (b) { setModel(b.dataset.id); closePopover(); }
@@ -516,12 +513,13 @@ function previewAttachment(a, onInsert) {
   const dlg = openModal({ title: a.name, body: pre, foot, wide: true });
 }
 
-function noticeHtml(m) {
+function noticeHtml(m, isLast) {
   if (!m.error) return '';
   const known = { stopped: t('stopped'), refusal: t('refusal'), max_tokens: t('maxTokens') };
   const text = known[m.error] || t('errorPrefix') + m.error;
   const cls = known[m.error] ? 'notice' : 'notice err';
-  return `<div class="${cls}">${icon('alert')}<span>${esc(text)}</span></div>`;
+  const retry = isLast && m.error !== 'max_tokens' ? `<button class="notice-btn" data-act="regen">${icon('refresh')}<span>${esc(t('retry'))}</span></button>` : '';
+  return `<div class="${cls}">${icon('alert')}<span class="grow">${esc(text)}</span>${retry}</div>`;
 }
 
 function messageEl(m, i) {
@@ -534,37 +532,60 @@ function messageEl(m, i) {
     el.querySelectorAll('.att').forEach(c => { c.onclick = () => previewAttachment(m.attachments[+c.dataset.idx]); });
     return el;
   }
-  const isLast = i === S.messages.length - 1;
-  const el = h(`<div class="msg msg-ai"><div class="ai-avatar">${icon('spark')}</div><div class="ai-body"></div></div>`);
-  fillAssistant(el.querySelector('.ai-body'), m, isLast);
+  const el = h(`<div class="msg msg-ai"><div class="ai-body"></div></div>`);
+  fillAssistant(el.querySelector('.ai-body'), m, i === S.messages.length - 1);
   return el;
 }
 
+const elapsed = m => Math.max(0, Math.floor((Date.now() - m.startedAt) / 1000));
+const fmtDuration = ms => ms >= 60000 ? t('secs', Math.round(ms / 1000)) : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
+
+// An assistant turn goes through: thinking (spinner + live timer, streamed
+// thoughts if the model shares them) → answering (text streams in, spinner
+// below) → done (thoughts fold into "Thought for Ns", actions + meta line).
 function fillAssistant(body, m, isLast) {
   const live = !!m.streaming;
+  const thinking = live && !m.content;
+  const thinkMs = m.think_ms || m.thinkMs || 0;
   let html = '';
-  if (m.reasoning) {
-    html += `<details class="reasoning"${live && !m.content ? ' open' : ''}><summary>${icon('right')}<span>${esc(live && !m.content ? t('thinkingNow') : t('thinking'))}</span></summary><div class="r-body"></div></details>`;
+  if (thinking) {
+    html += `<div class="think live${m.reasoning ? ' has-body' : ''}"><div class="think-head">
+      <span class="spin"></span><span class="shimmer">${esc(t('thinkingNow'))}</span><span class="timer">${esc(t('secs', elapsed(m)))}</span></div>
+      ${m.reasoning ? '<div class="r-body"></div>' : ''}</div>`;
+  } else if (m.reasoning || thinkMs >= 2000) {
+    const label = esc(t('thoughtFor', t('secs', Math.max(1, Math.round(thinkMs / 1000)))));
+    html += m.reasoning
+      ? `<details class="think"${m._open ? ' open' : ''}><summary>${icon('bulb')}<span>${label}</span>${icon('chevron')}</summary><div class="r-body"></div></details>`
+      : `<div class="think"><div class="think-head static">${icon('bulb')}<span>${label}</span></div></div>`;
   }
-  if (live && !m.content && !m.reasoning) html += '<div class="thinking-dots"><i></i><i></i><i></i></div>';
-  html += '<div class="md"></div>' + noticeHtml(m);
+  html += '<div class="md"></div>';
+  if (live && m.content) html += '<div class="writing"><span class="spin"></span></div>';
+  html += noticeHtml(m, isLast && !live);
   if (!live) {
-    const meta = [m.model, m.tokens_out ? `${fmtTokens(m.tokens_in)} → ${fmtTokens(m.tokens_out)} tokens` : ''].filter(Boolean).join(' · ');
+    const meta = [m.model, m.duration_ms ? fmtDuration(m.duration_ms) : '', m.tokens_out ? `${fmtTokens(m.tokens_in)} → ${fmtTokens(m.tokens_out)} tokens` : ''].filter(Boolean).join(' · ');
     html += `<div class="msg-actions${isLast ? ' show' : ''}">
       ${m.content ? `<button class="icon-btn" data-act="copy" title="${esc(t('copy'))}">${icon('copy')}</button>` : ''}
-      ${isLast ? `<button class="icon-btn" data-act="regen" title="${esc(t('regenerate'))}">${icon('refresh')}</button>` : ''}
+      ${isLast && !m.error ? `<button class="icon-btn" data-act="regen" title="${esc(t('regenerate'))}">${icon('refresh')}</button>` : ''}
       <span class="meta">${esc(meta)}</span></div>`;
   }
-  const open = body.querySelector('details.reasoning')?.open;
   body.innerHTML = html;
-  const det = body.querySelector('details.reasoning');
-  if (det) {
-    det.querySelector('.r-body').textContent = m.reasoning;
-    if (open !== undefined && !(live && !m.content)) det.open = open;
-    if (live && !m.content) { const rb = det.querySelector('.r-body'); rb.scrollTop = rb.scrollHeight; }
+  const rb = body.querySelector('.r-body');
+  if (rb) {
+    rb.textContent = m.reasoning;
+    if (thinking) rb.scrollTop = rb.scrollHeight;
   }
-  renderMarkdown(body.querySelector('.md'), m.content, live && !!m.content);
+  const det = body.querySelector('details.think');
+  if (det) det.ontoggle = () => { m._open = det.open; };
+  renderMarkdown(body.querySelector('.md'), m.content, live);
 }
+
+// Live timers tick without re-rendering the message.
+setInterval(() => {
+  const reply = S.messages.at(-1);
+  if (!reply?.streaming) return;
+  const el = $('#messages').lastElementChild?.querySelector('.timer');
+  if (el) el.textContent = t('secs', elapsed(reply));
+}, 250);
 
 function renderMessages() {
   const box = $('#messages');
@@ -707,7 +728,7 @@ async function send({ regenerate = false } = {}) {
     S.messages.push(userMsg);
     input.value = ''; S.attachments = []; renderAttachments(); autosize();
   }
-  const reply = { role: 'assistant', content: '', reasoning: '', streaming: true, model: modelById(S.model)?.model };
+  const reply = { role: 'assistant', content: '', reasoning: '', streaming: true, model: modelById(S.model)?.model, startedAt: Date.now() };
   S.messages.push(reply);
   renderMessages();
   stickBottom = true; scrollToBottom(true);
@@ -751,7 +772,7 @@ async function send({ regenerate = false } = {}) {
           started = true;
           onChatStarted(ev.chat);
           if (ev.user_message && userMsg) Object.assign(userMsg, ev.user_message, { pending: false });
-        } else if (ev.type === 'text') { reply.content += ev.t; repaint(); }
+        } else if (ev.type === 'text') { if (!reply.content) reply.thinkMs = Date.now() - reply.startedAt; reply.content += ev.t; repaint(); }
         else if (ev.type === 'reasoning') { reply.reasoning += ev.t; repaint(); }
         else if (ev.type === 'done') { Object.assign(reply, ev.message, { streaming: false }); }
       }

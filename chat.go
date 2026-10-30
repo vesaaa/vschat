@@ -258,10 +258,17 @@ func (a *App) handleSend(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	var res Result
 	var streamErr error
+	started := time.Now()
+	var firstText time.Duration // time to the first answer token: what the UI shows as thinking
 	go func() {
 		defer close(done)
 		res, streamErr = p.Stream(ctx, model, history, Sink{
-			Text:      func(t string) { events <- map[string]any{"type": "text", "t": t} },
+			Text: func(t string) {
+				if firstText == 0 {
+					firstText = time.Since(started)
+				}
+				events <- map[string]any{"type": "text", "t": t}
+			},
 			Reasoning: func(t string) { events <- map[string]any{"type": "reasoning", "t": t} },
 		})
 	}()
@@ -289,6 +296,7 @@ loop:
 	reply := &Message{
 		ChatID: chat.ID, Role: "assistant", Content: res.Content, Reasoning: res.Reasoning,
 		Model: model, Raw: res.Raw, TokensIn: res.In, TokensOut: res.Out,
+		ThinkMs: firstText.Milliseconds(), DurationMs: time.Since(started).Milliseconds(),
 	}
 	switch {
 	case interrupted:
