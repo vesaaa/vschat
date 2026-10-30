@@ -5,7 +5,8 @@ A small, self-hosted, multi-user AI chat. Plug in your keys for **ChatGPT, Claud
 一个小巧的自托管多用户 AI 对话。选服务商、填 Key 即可使用 ChatGPT / Claude / Gemini / Grok / DeepSeek / 通义千问 / Kimi / 智谱 GLM（或任何 OpenAI 兼容接口），每个用户有自己的账号和对话记录。
 
 - **Tiny** — one Go binary + one SQLite file. ~25 MB image; uses a few MB of RAM idle and ~25 MB in use. No Node, no Python, no database server.
-- **Multi-user** — admin creates accounts; chats are private per user; optional monthly token limit per user; usage dashboard.
+- **Multi-user** — admin creates accounts; chats are private per user; monthly token quotas (with a default for new users), a warning bar at 80% and a clear stop at 100%; usage dashboard.
+- **Admin visibility** — access log (sign-ins, failed sign-ins, chats) with client IP, country and device, works behind Cloudflare; each user's last activity; providers' remaining rate limits and reset times, plus account balance for DeepSeek and Kimi.
 - **Shared + personal models** — admins decide which shared providers each user can see; users can optionally bring their own API keys, visible only to them and not counted against their limit.
 - **Built-in providers** — pick a provider, paste a key, done: the current mainstream models are built in and update with new releases. Claude goes through the official SDK with thinking shown; reasoning from DeepSeek, Qwen, Kimi and GLM is shown too. Any other OpenAI-compatible endpoint (Ollama, OpenRouter, vLLM, …) works as a custom provider. Switch models mid-chat.
 - **Nice to use** — streaming, Markdown + code highlighting, light/dark, mobile layout, 中文 / English.
@@ -63,7 +64,7 @@ A named volume (`vschat-data:/data`) works just as well. Secrets can come from f
 | `OPENAI_API_KEY` `ANTHROPIC_API_KEY` `GEMINI_API_KEY` `XAI_API_KEY` `DEEPSEEK_API_KEY` `DASHSCOPE_API_KEY` `MOONSHOT_API_KEY` `ZHIPU_API_KEY` | | On first start, adds a provider for each key given |
 | `VSCHAT_SECRET` | | Encrypts stored API keys (AES-GCM). Set it before adding keys; existing plain keys are encrypted on start. Keep it safe — keys can't be read without it |
 | `PUID` / `PGID` | `10001` | Docker: user the server runs as. The container fixes `/data` ownership on start, so bind mounts work |
-| `VSCHAT_TRUST_PROXY` | | Set to `1` behind a reverse proxy so login rate-limiting uses `X-Forwarded-For` |
+| `VSCHAT_TRUST_PROXY` | `auto` | Which forwarding headers to believe for the client IP. `auto` trusts them only when the connection comes from a Cloudflare edge, localhost or a private network (e.g. your nginx); `1` always (origin reachable only through your proxy); `0` never |
 
 `VSCHAT_SECRET`, `VSCHAT_ADMIN_PASSWORD` and the `*_API_KEY` variables also accept a `_FILE` suffix pointing at a file to read (Docker / Kubernetes secrets).
 
@@ -96,6 +97,10 @@ A provider added from the list **follows the built-in model list** by default, s
 
   Users then get **My models** in their menu. Those providers are private to the user, show up as "Mine" in the model picker, and their tokens are tracked separately (not counted against the monthly limit). Switching to a stricter mode disables personal providers that no longer fit; they're kept and marked.
 - In custom mode, personal providers can't reach `localhost` or private/LAN addresses unless you turn on *Let personal providers reach private networks* (e.g. for a LAN Ollama), so users can't use the server to probe your network.
+
+## Client IP behind Cloudflare / a reverse proxy
+
+VsChat records the visitor's IP in the access log and uses it for sign-in rate limiting. With the default `VSCHAT_TRUST_PROXY=auto` it reads `CF-Connecting-IP`, `True-Client-IP`, the first `X-Forwarded-For` hop, then `X-Real-IP` — but only when the request arrives from a Cloudflare edge address, localhost or a private network, so clients hitting the port directly can't fake their IP. Behind Cloudflare the visitor's country (`CF-IPCountry`) is recorded too.
 
 ## Behind a reverse proxy
 

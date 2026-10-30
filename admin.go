@@ -32,7 +32,7 @@ func (a *App) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "username required, password at least 6 characters")
 		return
 	}
-	var limit int64
+	limit := a.settings().DefaultLimit
 	if req.TokenLimit != nil {
 		limit = *req.TokenLimit
 	}
@@ -114,5 +114,5 @@ func (a *App) handleUsage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"month": m, "rows": rows})
+	writeJSON(w, map[string]any{"month": m, "rows": rows, "reset_at": monthReset()})
 }

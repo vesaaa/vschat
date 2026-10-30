@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -61,10 +62,12 @@ func (a *App) canUse(u *User, p *Provider) bool {
 // Keys never leave the server; the UI only sees whether one is set.
 type providerView struct {
 	*Provider
-	HasKey  bool   `json:"has_key"`
-	KeyHint string `json:"key_hint"`
-	KeyErr  string `json:"key_error,omitempty"`
-	Blocked bool   `json:"blocked,omitempty"` // personal provider not allowed by the current mode
+	HasKey  bool      `json:"has_key"`
+	KeyHint string    `json:"key_hint"`
+	KeyErr  string    `json:"key_error,omitempty"`
+	Blocked bool      `json:"blocked,omitempty"` // personal provider not allowed by the current mode
+	Rate    *RateInfo `json:"rate,omitempty"`    // shared providers: last seen rate-limit headers
+	Balance bool      `json:"balance_supported,omitempty"`
 }
 
 func viewProvider(p *Provider) providerView {
@@ -114,6 +117,9 @@ func (a *App) saveProvider(w http.ResponseWriter, r *http.Request, p *Provider) 
 	if !readJSON(w, r, &req) {
 		return
 	}
+	if pr := presetByID(req.Preset); pr != nil {
+		req.Kind = pr.Kind // a preset fixes the API type
+	}
 	if req.Kind != "openai" && req.Kind != "anthropic" {
 		writeErr(w, 400, "kind must be openai or anthropic")
 		return
@@ -125,8 +131,7 @@ func (a *App) saveProvider(w http.ResponseWriter, r *http.Request, p *Provider) 
 	req.BaseURL = strings.TrimSpace(req.BaseURL)
 	pr := presetByID(req.Preset)
 	if pr != nil {
-		// A preset fixes the API type; the address defaults to the official one.
-		req.Kind = pr.Kind
+		// The address defaults to the preset's official one.
 		if req.BaseURL == "" {
 			req.BaseURL = pr.BaseURL
 		}
@@ -228,7 +233,20 @@ func (a *App) sharedProvider(w http.ResponseWriter, r *http.Request) *Provider {
 
 func (a *App) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	ps, err := a.store.SharedProviders()
-	writeProviders(w, ps, err)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	out := []providerView{}
+	for _, p := range ps {
+		v := viewProvider(p)
+		if rate, ok := a.rates.get(p.ID); ok {
+			v.Rate = &rate
+		}
+		v.Balance = balanceSupported(p)
+		out = append(out, v)
+	}
+	writeJSON(w, out)
 }
 
 func (a *App) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
@@ -325,14 +343,18 @@ func (a *App) handleOwnRemoteModels(w http.ResponseWriter, r *http.Request) {
 
 // --- settings (admin) ---
 
+const settingDefaultLimit = "default_token_limit" // monthly limit for new users
+
 type settingsView struct {
+	DefaultLimit   int64  `json:"default_token_limit"`
 	UserKeys       string `json:"user_keys"`
 	PrivateNetwork bool   `json:"allow_private_network"`
 	KeysEncrypted  bool   `json:"keys_encrypted"`
 }
 
 func (a *App) settings() settingsView {
-	return settingsView{UserKeys: a.keyMode(), PrivateNetwork: !a.privateNetworkBlocked(), KeysEncrypted: a.store.box != nil}
+	limit, _ := strconv.ParseInt(a.store.Setting(settingDefaultLimit), 10, 64)
+	return settingsView{DefaultLimit: limit, UserKeys: a.keyMode(), PrivateNetwork: !a.privateNetworkBlocked(), KeysEncrypted: a.store.box != nil}
 }
 
 func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -343,6 +365,7 @@ func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserKeys       *string `json:"user_keys"`
 		PrivateNetwork *bool   `json:"allow_private_network"`
+		DefaultLimit   *int64  `json:"default_token_limit"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -353,6 +376,9 @@ func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.store.SetSetting(settingKeyMode, *m)
+	}
+	if v := req.DefaultLimit; v != nil {
+		a.store.SetSetting(settingDefaultLimit, strconv.FormatInt(max(*v, 0), 10))
 	}
 	if v := req.PrivateNetwork; v != nil {
 		a.store.SetSetting(settingPrivateNetwork, map[bool]string{true: "1", false: "0"}[*v])

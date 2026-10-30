@@ -41,6 +41,20 @@ CREATE TABLE IF NOT EXISTS provider_users (
 	user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	PRIMARY KEY (provider_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS access_log (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	created_at INTEGER NOT NULL,
+	user_id    INTEGER NOT NULL DEFAULT 0,
+	username   TEXT NOT NULL DEFAULT '',
+	event      TEXT NOT NULL,
+	ip         TEXT NOT NULL DEFAULT '',
+	country    TEXT NOT NULL DEFAULT '',
+	user_agent TEXT NOT NULL DEFAULT '',
+	detail     TEXT NOT NULL DEFAULT '',
+	ok         INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS access_log_time ON access_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS access_log_user ON access_log(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS settings (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
@@ -88,6 +102,9 @@ var migrations = []struct{ table, column, def string }{
 	{"providers", "preset", "TEXT NOT NULL DEFAULT ''"},       // catalog preset ID; with empty models it follows the catalog
 	{"messages", "think_ms", "INTEGER NOT NULL DEFAULT 0"},    // request start to first answer token
 	{"messages", "duration_ms", "INTEGER NOT NULL DEFAULT 0"}, // request start to end
+	{"users", "last_seen_at", "INTEGER NOT NULL DEFAULT 0"},
+	{"users", "last_ip", "TEXT NOT NULL DEFAULT ''"},
+	{"users", "last_country", "TEXT NOT NULL DEFAULT ''"},
 }
 
 type Store struct {
@@ -103,6 +120,9 @@ type User struct {
 	Disabled   bool   `json:"disabled"`
 	TokenLimit int64  `json:"token_limit"`
 	CreatedAt  int64  `json:"created_at"`
+	LastSeenAt int64  `json:"last_seen_at"`
+	LastIP     string `json:"last_ip"`
+	Country    string `json:"last_country"`
 }
 
 type Provider struct {
@@ -273,11 +293,11 @@ func b2i(b bool) int {
 
 // --- users ---
 
-const userCols = `id, username, pass_hash, is_admin, disabled, token_limit, created_at`
+const userCols = `id, username, pass_hash, is_admin, disabled, token_limit, created_at, last_seen_at, last_ip, last_country`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Username, &u.PassHash, &u.IsAdmin, &u.Disabled, &u.TokenLimit, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PassHash, &u.IsAdmin, &u.Disabled, &u.TokenLimit, &u.CreatedAt, &u.LastSeenAt, &u.LastIP, &u.Country)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errNotFound
 	}
@@ -348,6 +368,69 @@ func (s *Store) CountAdmins() (n int, err error) {
 	return
 }
 
+func (s *Store) TouchUser(id int64, ip, country string) {
+	s.db.Exec(`UPDATE users SET last_seen_at=?, last_ip=?, last_country=? WHERE id=?`, now(), ip, country, id)
+}
+
+// --- access log ---
+
+const accessLogKeep = 20000 // rows kept; older ones are pruned
+
+type AccessEntry struct {
+	ID        int64  `json:"id"`
+	CreatedAt int64  `json:"created_at"`
+	UserID    int64  `json:"user_id"`
+	Username  string `json:"username"`
+	Event     string `json:"event"` // login, login_failed, chat
+	IP        string `json:"ip"`
+	Country   string `json:"country"`
+	UserAgent string `json:"user_agent"`
+	Detail    string `json:"detail"`
+	OK        bool   `json:"ok"`
+}
+
+func (s *Store) LogAccess(e *AccessEntry) {
+	e.CreatedAt = now()
+	res, err := s.db.Exec(`INSERT INTO access_log(created_at, user_id, username, event, ip, country, user_agent, detail, ok) VALUES(?,?,?,?,?,?,?,?,?)`,
+		e.CreatedAt, e.UserID, e.Username, e.Event, e.IP, e.Country, e.UserAgent, e.Detail, b2i(e.OK))
+	if err != nil {
+		return
+	}
+	if id, _ := res.LastInsertId(); id%500 == 0 {
+		s.db.Exec(`DELETE FROM access_log WHERE id <= ?`, id-accessLogKeep)
+	}
+}
+
+// AccessLog lists the newest entries, optionally for one user, older than before (0 = newest).
+func (s *Store) AccessLog(userID, before int64, limit int) ([]AccessEntry, error) {
+	q := `SELECT id, created_at, user_id, username, event, ip, country, user_agent, detail, ok FROM access_log WHERE 1=1`
+	var args []any
+	if userID > 0 {
+		q += ` AND user_id=?`
+		args = append(args, userID)
+	}
+	if before > 0 {
+		q += ` AND id<?`
+		args = append(args, before)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AccessEntry{}
+	for rows.Next() {
+		var e AccessEntry
+		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.UserID, &e.Username, &e.Event, &e.IP, &e.Country, &e.UserAgent, &e.Detail, &e.OK); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // --- sessions ---
 
 func (s *Store) CreateSession(tokenHash string, userID int64, ttl time.Duration) error {
@@ -357,7 +440,8 @@ func (s *Store) CreateSession(tokenHash string, userID int64, ttl time.Duration)
 }
 
 func (s *Store) SessionUser(tokenHash string) (*User, error) {
-	return scanUser(s.db.QueryRow(`SELECT u.id, u.username, u.pass_hash, u.is_admin, u.disabled, u.token_limit, u.created_at
+	return scanUser(s.db.QueryRow(`SELECT u.id, u.username, u.pass_hash, u.is_admin, u.disabled, u.token_limit, u.created_at,
+		u.last_seen_at, u.last_ip, u.last_country
 		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=? AND s.expires_at>?`, tokenHash, now()))
 }
 

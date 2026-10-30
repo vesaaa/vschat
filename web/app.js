@@ -35,6 +35,13 @@ const I18N = {
     fetchModels: '从服务商获取', fetching: '获取中…', enabled: '启用', deleteProvider: name => `删除服务「${name}」？`,
     modelCount: n => `${n} 个模型`, noKey: '缺少 Key', saved: '已保存',
     month: '月份', requests: '请求数', input: '输入', output: '输出', total: '合计', ownKeys: '自带 Key',
+    quotaWarn: (pct, d) => `本月额度已用 ${pct}%，${d} 重置`, quotaOut: d => `本月额度已用完，${d} 恢复`, quotaOwnOk: '使用自己的 Key 不受影响',
+    remaining: n => `剩余 ${n}`, resetOn: d => `${d} 重置`, lastActive: '最近活跃', never: '从未登录',
+    ago: (n, u) => `${n} ${u}前`, unitS: '秒', unitM: '分钟', unitH: '小时', unitD: '天', justNow: '刚刚',
+    access: '访问记录', allUsers: '全部用户', time: '时间', event: '事件', ipAddr: 'IP', device: '设备', detailCol: '详情', loadMore: '加载更多',
+    evLogin: '登录', evLoginFailed: '登录失败', evChat: '对话',
+    rateReq: '请求余量', rateTok: 'Token 余量', resetIn: s => `${s}后重置`, updated: s => `更新于 ${s}`, noRateYet: '发起对话后显示限流余量',
+    checkBalance: '查询余额', balance: '余额', defaultLimit: '新用户默认每月 token 上限', defaultLimitSub: '新建用户时自动填入，0 表示不限。',
     visibility: '谁可以使用', everyone: '所有用户', selectedUsers: '指定用户', usersCount: n => `${n} 位用户`,
     pickUsers: '勾选可以使用的用户', settings: '设置', mine: '我的',
     myModels: '我的模型', myModelsSub: '添加你自己的 API Key，只有你能看到和使用，用量不计入额度。', noOwn: '还没有添加自己的模型服务',
@@ -79,6 +86,13 @@ const I18N = {
     fetchModels: 'Fetch from provider', fetching: 'Fetching…', enabled: 'Enabled', deleteProvider: name => `Delete provider "${name}"?`,
     modelCount: n => `${n} models`, noKey: 'No key', saved: 'Saved',
     month: 'Month', requests: 'Requests', input: 'Input', output: 'Output', total: 'Total', ownKeys: 'Own keys',
+    quotaWarn: (pct, d) => `${pct}% of this month's quota used · resets ${d}`, quotaOut: d => `Monthly quota used up · resets ${d}`, quotaOwnOk: 'Your own keys still work',
+    remaining: n => `${n} left`, resetOn: d => `resets ${d}`, lastActive: 'Last active', never: 'Never',
+    ago: (n, u) => `${n}${u} ago`, unitS: 's', unitM: 'm', unitH: 'h', unitD: 'd', justNow: 'just now',
+    access: 'Access log', allUsers: 'All users', time: 'Time', event: 'Event', ipAddr: 'IP', device: 'Device', detailCol: 'Details', loadMore: 'Load more',
+    evLogin: 'Sign in', evLoginFailed: 'Failed sign-in', evChat: 'Chat',
+    rateReq: 'Requests left', rateTok: 'Tokens left', resetIn: s => `resets in ${s}`, updated: s => `updated ${s}`, noRateYet: 'Rate limits show up after the first chat',
+    checkBalance: 'Check balance', balance: 'Balance', defaultLimit: 'Default monthly token limit for new users', defaultLimitSub: 'Filled in when creating a user. 0 means unlimited.',
     visibility: 'Who can use it', everyone: 'Everyone', selectedUsers: 'Selected users', usersCount: n => `${n} users`,
     pickUsers: 'Tick the users who may use it', settings: 'Settings', mine: 'Mine',
     myModels: 'My models', myModelsSub: 'Add your own API keys. Only you can see and use them, and they don’t count toward your limit.', noOwn: 'No personal providers yet',
@@ -128,6 +142,7 @@ const ICONS = {
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   cube: '<path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
   sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
   bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/>',
@@ -152,6 +167,28 @@ function fmtTokens(n) {
 }
 function fmtSize(n) { return n >= 1024 * 1024 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B'; }
 function lineCount(s) { return s ? s.split('\n').length : 0; }
+const fmtDate = ts => new Date(ts * 1000).toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en', { month: 'short', day: 'numeric' });
+const fmtDateTime = ts => new Date(ts * 1000).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function fmtSpan(sec) {
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return `${sec}${lang === 'zh' ? ' 秒' : 's'}`;
+  if (sec < 3600) return `${Math.round(sec / 60)}${lang === 'zh' ? ' 分钟' : 'm'}`;
+  if (sec < 86400) return `${Math.round(sec / 3600)}${lang === 'zh' ? ' 小时' : 'h'}`;
+  return `${Math.round(sec / 86400)}${lang === 'zh' ? ' 天' : 'd'}`;
+}
+function fmtAgo(ts) {
+  if (!ts) return t('never');
+  const d = Date.now() / 1000 - ts;
+  return d < 30 ? t('justNow') : t('ago', ...(d < 60 ? [Math.round(d), t('unitS')] : d < 3600 ? [Math.round(d / 60), t('unitM')] : d < 86400 ? [Math.round(d / 3600), t('unitH')] : [Math.round(d / 86400), t('unitD')]));
+}
+// "Chrome · Windows" from a user agent string.
+function uaSummary(ua) {
+  if (!ua) return '';
+  const b = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : /curl|python|Go-http|okhttp/i.test(ua) ? ua.split('/')[0] : '';
+  const o = /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '';
+  return [b, o].filter(Boolean).join(' · ') || ua.slice(0, 40);
+}
+const flag = cc => cc ? String.fromCodePoint(...[...cc].map(c => 0x1f1a5 + c.charCodeAt(0))) + ' ' : '';
 
 function toast(msg, err = false) {
   const el = h(`<div class="toast${err ? ' err' : ''}">${esc(msg)}</div>`);
@@ -264,7 +301,7 @@ $('#login-form').addEventListener('submit', async e => {
 async function boot() {
   let me;
   try { me = await api('GET', '/me'); } catch { return; }
-  S.me = me.user; S.monthTokens = me.month_tokens; S.userKeys = me.user_keys;
+  S.me = me.user; S.monthTokens = me.month_tokens; S.resetAt = me.reset_at; S.userKeys = me.user_keys;
   $('#login').hidden = true;
   $('#app').hidden = false;
   $('#user-name').textContent = S.me.username;
@@ -279,6 +316,7 @@ async function loadModels() {
   S.models = await api('GET', '/models');
   if (!modelById(S.model)) S.model = S.models[0]?.id || '';
   renderModelLabel();
+  renderQuota();
 }
 
 function renderModelLabel() {
@@ -286,10 +324,25 @@ function renderModelLabel() {
   $('#model-label').innerHTML = m ? `${esc(m.model)} <span class="sub">· ${esc(m.own ? t('mine') + ' · ' + m.provider : m.provider)}</span>` : esc(t('noModel'));
 }
 
+// A slim bar above the composer once 80% of the monthly quota is used. Only
+// shared models count, so it hides while a model on the user's own key is picked.
+function renderQuota() {
+  const box = $('#quota');
+  const limit = S.me?.token_limit || 0;
+  const pct = limit ? Math.floor(S.monthTokens / limit * 100) : 0;
+  if (!limit || pct < 80 || modelById(S.model)?.own) { box.hidden = true; return; }
+  const out = pct >= 100;
+  box.hidden = false;
+  box.className = 'quota' + (out ? ' out' : '');
+  box.innerHTML = `<span class="quota-bar"><i style="width:${Math.min(100, pct)}%"></i></span>
+    <span>${esc(out ? t('quotaOut', fmtDate(S.resetAt)) : t('quotaWarn', pct, fmtDate(S.resetAt)))}${out && S.userKeys !== 'off' ? ' · ' + esc(t('quotaOwnOk')) : ''}</span>`;
+}
+
 function setModel(id) {
   S.model = id;
   store.set('model', id);
   renderModelLabel();
+  renderQuota();
   if (S.chatId) api('PATCH', `/chats/${S.chatId}`, { model: id }).catch(() => {});
 }
 
@@ -752,7 +805,12 @@ async function send({ regenerate = false } = {}) {
     });
     if (res.status === 401) { showLogin(); return; }
     if (!res.ok) {
-      let msg = res.statusText; try { msg = (await res.json()).error || msg; } catch {}
+      let msg = res.statusText;
+      try {
+        const e = await res.json();
+        msg = e.error || msg;
+        if (e.code === 'quota_exceeded') { msg = t('quotaOut', fmtDate(e.reset_at)); S.monthTokens = Math.max(S.monthTokens, S.me.token_limit); renderQuota(); }
+      } catch {}
       throw new HttpError(res.status, msg);
     }
     const reader = res.body.getReader();
@@ -794,7 +852,7 @@ async function send({ regenerate = false } = {}) {
     if (S.controller === controller) S.controller = null;
     updateSend();
     if (S.messages.includes(reply) || !started) { renderMessages(); scrollToBottom(); }
-    api('GET', '/me').then(me => { S.monthTokens = me.month_tokens; }).catch(() => {});
+    api('GET', '/me').then(me => { S.me = me.user; S.monthTokens = me.month_tokens; S.resetAt = me.reset_at; renderQuota(); }).catch(() => {});
   }
 }
 
@@ -877,14 +935,16 @@ function openAdmin() {
     <button class="tab" data-tab="users">${esc(t('users'))}</button>
     <button class="tab" data-tab="providers">${esc(t('providers'))}</button>
     <button class="tab" data-tab="usage">${esc(t('usage'))}</button>
+    <button class="tab" data-tab="access">${esc(t('access'))}</button>
     <button class="tab" data-tab="settings">${esc(t('settings'))}</button></div>`);
   dlg.querySelector('.modal-head').after(tabs);
   dlg.querySelector('.modal-body').style.paddingTop = '18px';
-  const show = name => {
+  const show = (name, arg) => {
     tabs.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
     store.set('adminTab', name);
-    ({ users: adminUsers, providers: adminProviders, usage: adminUsage, settings: adminSettings })[name](body);
+    ({ users: adminUsers, providers: adminProviders, usage: adminUsage, access: adminAccess, settings: adminSettings })[name](body, arg);
   };
+  body.addEventListener('admin-show', e => show(e.detail.tab, e.detail.arg));
   tabs.onclick = e => { const b = e.target.closest('[data-tab]'); if (b) show(b.dataset.tab); };
   show(store.get('adminTab', 'providers'));
 }
@@ -894,28 +954,65 @@ async function adminUsers(body) {
   const used = Object.fromEntries(usage.rows.map(r => [r.user_id, r.tokens_in + r.tokens_out]));
   body.innerHTML = `<div class="row"><div class="grow"></div><button class="btn btn-primary btn-sm" data-add>${icon('plus')}${esc(t('addUser'))}</button></div>
     <div class="table-wrap"><table class="table"><thead><tr>
-      <th>${esc(t('username'))}</th><th>${esc(t('role'))}</th><th>${esc(t('status'))}</th><th>${esc(t('monthUsage'))}</th><th></th></tr></thead><tbody>
-    ${users.map(u => `<tr data-id="${u.id}">
-      <td><strong>${esc(u.username)}</strong></td>
-      <td>${u.is_admin ? `<span class="badge accent">${esc(t('adminRole'))}</span>` : `<span class="badge">${esc(t('userRole'))}</span>`}</td>
+      <th>${esc(t('username'))}</th><th>${esc(t('status'))}</th><th>${esc(t('monthUsage'))}</th><th>${esc(t('lastActive'))}</th><th></th></tr></thead><tbody>
+    ${users.map(u => {
+      const n = used[u.id] || 0;
+      const quota = u.token_limit
+        ? `${fmtTokens(n)} / ${fmtTokens(u.token_limit)}<div class="sub">${esc(t('remaining', fmtTokens(Math.max(0, u.token_limit - n))))} · ${esc(t('resetOn', fmtDate(usage.reset_at)))}</div>`
+        : `${fmtTokens(n)} <span class="sub">/ ${esc(t('unlimited'))}</span>`;
+      return `<tr data-id="${u.id}">
+      <td><strong>${esc(u.username)}</strong> ${u.is_admin ? `<span class="badge accent">${esc(t('adminRole'))}</span>` : ''}</td>
       <td>${u.disabled ? `<span class="badge danger">${esc(t('disabled'))}</span>` : `<span class="badge ok">${esc(t('active'))}</span>`}</td>
-      <td>${fmtTokens(used[u.id])} / ${u.token_limit ? fmtTokens(u.token_limit) : esc(t('unlimited'))}</td>
-      <td class="actions"><button class="icon-btn" data-edit title="${esc(t('editUser'))}">${icon('edit')}</button>
-        ${u.id !== S.me.id ? `<button class="icon-btn" data-del title="${esc(t('delete'))}">${icon('trash')}</button>` : ''}</td></tr>`).join('')}
+      <td>${quota}</td>
+      <td>${esc(fmtAgo(u.last_seen_at))}${u.last_ip ? `<div class="sub mono">${flag(u.last_country)}${esc(u.last_ip)}</div>` : ''}</td>
+      <td class="actions"><button class="icon-btn" data-log title="${esc(t('access'))}">${icon('clock')}</button>
+        <button class="icon-btn" data-edit title="${esc(t('editUser'))}">${icon('edit')}</button>
+        ${u.id !== S.me.id ? `<button class="icon-btn" data-del title="${esc(t('delete'))}">${icon('trash')}</button>` : ''}</td></tr>`;
+    }).join('')}
     </tbody></table></div>`;
+  body.onchange = null;
   body.onclick = async e => {
     if (e.target.closest('[data-add]')) return userForm(null, () => adminUsers(body));
     const row = e.target.closest('tr[data-id]');
     if (!row) return;
     const u = users.find(x => x.id === +row.dataset.id);
-    if (e.target.closest('[data-edit]')) userForm(u, () => adminUsers(body));
+    if (e.target.closest('[data-log]')) body.dispatchEvent(new CustomEvent('admin-show', { detail: { tab: 'access', arg: u.id } }));
+    else if (e.target.closest('[data-edit]')) userForm(u, () => adminUsers(body));
     else if (e.target.closest('[data-del]') && await confirmDialog(t('deleteUser', u.username), t('deleteUserSub'))) {
       await api('DELETE', `/admin/users/${u.id}`); adminUsers(body);
     }
   };
 }
 
-function userForm(u, done) {
+async function adminAccess(body, userID) {
+  const users = await api('GET', '/admin/users');
+  let uid = userID || 0, before = 0;
+  const evName = { login: t('evLogin'), login_failed: t('evLoginFailed'), chat: t('evChat') };
+  body.innerHTML = `<div class="row"><label class="field" style="flex:none;min-width:200px"><select data-user>
+      <option value="0">${esc(t('allUsers'))}</option>${users.map(u => `<option value="${u.id}" ${u.id === uid ? 'selected' : ''}>${esc(u.username)}</option>`).join('')}</select></label></div>
+    <div class="table-wrap"><table class="table log"><thead><tr><th>${esc(t('time'))}</th><th>${esc(t('username'))}</th><th>${esc(t('event'))}</th>
+      <th>${esc(t('ipAddr'))}</th><th>${esc(t('device'))}</th><th>${esc(t('detailCol'))}</th></tr></thead><tbody></tbody></table></div>
+    <div class="row" data-more hidden><div class="grow"></div><button class="btn btn-sm" data-load>${esc(t('loadMore'))}</button><div class="grow"></div></div>`;
+  const tbody = body.querySelector('tbody');
+  const load = async (reset) => {
+    if (reset) { tbody.innerHTML = ''; before = 0; }
+    const rows = await api('GET', `/admin/access?user=${uid}&before=${before}`);
+    tbody.insertAdjacentHTML('beforeend', rows.map(r => `<tr class="${r.ok ? '' : 'bad'}">
+      <td class="nowrap">${esc(fmtDateTime(r.created_at))}</td><td>${esc(r.username || '—')}</td>
+      <td><span class="badge${r.ok ? '' : ' danger'}">${esc(evName[r.event] || r.event)}</span></td>
+      <td class="mono nowrap">${flag(r.country)}${esc(r.ip)}</td><td class="nowrap" title="${esc(r.user_agent)}">${esc(uaSummary(r.user_agent))}</td>
+      <td class="sub">${esc(r.detail)}</td></tr>`).join(''));
+    if (!tbody.children.length) tbody.innerHTML = `<tr><td colspan="6" class="empty-state">—</td></tr>`;
+    before = rows.at(-1)?.id || before;
+    body.querySelector('[data-more]').hidden = rows.length < 100;
+  };
+  body.onclick = e => { if (e.target.closest('[data-load]')) load(false); };
+  body.onchange = e => { if (e.target.matches('[data-user]')) { uid = +e.target.value; load(true); } };
+  await load(true);
+}
+
+async function userForm(u, done) {
+  const defaults = u ? null : await api('GET', '/admin/settings');
   const form = h(`<form style="display:flex;flex-direction:column;gap:14px">
     <label class="field"><span>${esc(t('username'))}</span><input name="username" required ${u ? 'disabled' : ''}></label>
     <label class="field"><span>${esc(t('password'))}</span><input name="password" type="password" autocomplete="new-password" ${u ? '' : 'required minlength="6"'} placeholder="${u ? esc(t('pwKeep')) : ''}"></label>
@@ -924,7 +1021,7 @@ function userForm(u, done) {
     ${u ? `<label class="check"><input type="checkbox" name="disabled"><span>${esc(t('isDisabled'))}</span></label>` : ''}
     <div class="form-error"></div></form>`);
   form.username.value = u?.username || '';
-  form.limit.value = u?.token_limit || 0;
+  form.limit.value = u ? u.token_limit || 0 : defaults.default_token_limit || 0;
   form.admin.checked = !!u?.is_admin;
   if (u) form.disabled.checked = u.disabled;
   const submit = async () => {
@@ -945,6 +1042,16 @@ function userForm(u, done) {
 const SHARED = { base: '/admin/providers', shared: true };
 const OWN = { base: '/my/providers', shared: false };
 
+function rateLine(r) {
+  if (!r) return `<span class="sub">${esc(t('noRateYet'))}</span>`;
+  const now = Date.now() / 1000;
+  const part = (label, left, limit, reset, fmt) => limit
+    ? `<span>${esc(label)} <strong>${fmt(left)}</strong>/${fmt(limit)}${reset > now ? ` · ${esc(t('resetIn', fmtSpan(reset - now)))}` : ''}</span>` : '';
+  const exact = n => (n || 0).toLocaleString();
+  return [part(t('rateReq'), r.req_remaining, r.req_limit, r.req_reset, exact), part(t('rateTok'), r.tok_remaining, r.tok_limit, r.tok_reset, fmtTokens),
+    `<span class="sub">${esc(t('updated', fmtAgo(r.updated_at)))}</span>`].filter(Boolean).join('<span class="dot">·</span>');
+}
+
 function providerCards(ps, scope) {
   if (!ps.length) return scope.shared ? '' : `<div class="empty-state">${esc(t('noOwn'))}</div>`;
   return `<div class="prov-list">${ps.map(p => `<div class="prov" data-id="${p.id}">
@@ -955,6 +1062,7 @@ function providerCards(ps, scope) {
         ${p.blocked ? `<span class="badge danger">${esc(t('blockedMode'))}</span>` : ''}
         ${p.key_error ? `<span class="badge danger" title="${esc(p.key_error)}">${esc(t('noKey'))}</span>` : p.has_key ? '' : `<span class="badge danger">${esc(t('noKey'))}</span>`}</div>
       <div class="prov-sub">${esc(t('modelCount', p.models.length))} · ${esc(p.base_url || (p.kind === 'anthropic' ? 'api.anthropic.com' : 'api.openai.com'))}</div>
+      ${scope.shared && p.has_key ? `<div class="prov-rate">${rateLine(p.rate)}${p.balance_supported ? ` <button type="button" class="link-btn" data-balance>${esc(t('checkBalance'))}</button><span data-balance-out></span>` : ''}</div>` : ''}
     </div>
     <label class="switch" title="${esc(t('enabled'))}"><input type="checkbox" data-toggle ${p.enabled ? 'checked' : ''}><span></span></label>
     <button class="icon-btn" data-edit>${icon('edit')}</button></div>`).join('')}</div>`;
@@ -966,9 +1074,21 @@ async function providerList(body, scope) {
   body.innerHTML = `${scope.shared ? '' : `<p style="margin:0;color:var(--text-2);font-size:14px">${esc(t('myModelsSub'))}</p>`}
     <div class="row"><div class="grow"></div><button class="btn btn-primary btn-sm" data-add>${icon('plus')}${esc(t('addProvider'))}</button></div>
     ${providerCards(ps, scope)}`;
-  body.onclick = e => {
+  body.onclick = async e => {
     if (e.target.closest('[data-add]')) return providerForm(null, scope, users, reload);
     const card = e.target.closest('.prov');
+    const bal = e.target.closest('[data-balance]');
+    if (card && bal) {
+      const out = card.querySelector('[data-balance-out]');
+      bal.disabled = true; out.textContent = '…';
+      try {
+        const st = await api('GET', `/admin/providers/${card.dataset.id}/status`);
+        out.innerHTML = st.balance ? ' ' + st.balance.map(b => `${esc(t('balance'))} <strong>${esc(b.amount)}</strong> ${esc(b.currency)}`).join(' · ')
+          : ` <span class="err-text">${esc(st.balance_error || '—')}</span>`;
+      } catch (ex) { out.innerHTML = ` <span class="err-text">${esc(ex.message)}</span>`; }
+      bal.disabled = false;
+      return;
+    }
     if (card && e.target.closest('[data-edit]')) providerForm(ps.find(p => p.id === +card.dataset.id), scope, users, reload);
   };
   body.onchange = async e => {
@@ -1148,6 +1268,8 @@ async function adminSettings(body) {
   const st = await api('GET', '/admin/settings');
   const render = () => {
     body.innerHTML = `<div class="settings">
+      <div class="setting"><span class="setting-text"><strong>${esc(t('defaultLimit'))}</strong><small>${esc(t('defaultLimitSub'))}</small></span>
+        <input class="setting-select" type="number" min="0" step="10000" data-key="default_token_limit" value="${st.default_token_limit || 0}"></div>
       <div class="setting"><span class="setting-text"><strong>${esc(t('keyMode'))}</strong><small>${esc(t('keyModeSub'))}</small></span>
         <select class="setting-select" data-key="user_keys">
           ${['off', 'official', 'custom'].map(m => `<option value="${m}" ${st.user_keys === m ? 'selected' : ''}>${esc(t('mode' + m[0].toUpperCase() + m.slice(1)))}</option>`).join('')}
@@ -1162,7 +1284,8 @@ async function adminSettings(body) {
   body.onchange = async e => {
     const k = e.target.dataset.key;
     if (!k) return;
-    const res = await api('PUT', '/admin/settings', { [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+    const v = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'number' ? Math.max(0, +e.target.value || 0) : e.target.value;
+    const res = await api('PUT', '/admin/settings', { [k]: v });
     Object.assign(st, res);
     S.userKeys = res.user_keys;
     render();
@@ -1173,7 +1296,8 @@ async function adminSettings(body) {
 async function adminUsage(body, m) {
   const data = await api('GET', '/admin/usage' + (m ? `?month=${encodeURIComponent(m)}` : ''));
   const max = Math.max(1, ...data.rows.map(r => r.token_limit || r.tokens_in + r.tokens_out));
-  body.innerHTML = `<div class="row"><label class="field" style="flex:none"><span>${esc(t('month'))}</span><input type="month" value="${esc(data.month)}"></label></div>
+  body.innerHTML = `<div class="row" style="align-items:flex-end"><label class="field" style="flex:none"><span>${esc(t('month'))}</span><input type="month" value="${esc(data.month)}"></label>
+    <span class="sub" style="padding-bottom:10px">${esc(t('resetOn', fmtDate(data.reset_at)))}</span></div>
     <div class="table-wrap"><table class="table"><thead><tr><th>${esc(t('username'))}</th><th>${esc(t('requests'))}</th>
       <th>${esc(t('input'))}</th><th>${esc(t('output'))}</th><th>${esc(t('total'))}</th><th>${esc(t('ownKeys'))}</th><th style="width:24%"></th></tr></thead><tbody>
     ${data.rows.map(r => { const tot = r.tokens_in + r.tokens_out; const cap = r.token_limit || max;

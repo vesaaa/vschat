@@ -25,6 +25,15 @@ var webFS embed.FS
 type App struct {
 	store   *Store
 	limiter *loginLimiter
+	seen    seenCache
+	rates   rateCache
+}
+
+func newApp(store *Store) *App {
+	a := &App{store: store, limiter: &loginLimiter{fail: map[string][]time.Time{}}}
+	a.seen.last = map[int64]seenMark{}
+	a.rates.m = map[int64]RateInfo{}
+	return a
 }
 
 func env(key, def string) string {
@@ -131,6 +140,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/providers/{id}", a.requireAdmin(a.handleDeleteProvider))
 	mux.HandleFunc("POST /api/admin/providers/{id}/models", a.requireAdmin(a.handleRemoteModels))
 	mux.HandleFunc("GET /api/admin/usage", a.requireAdmin(a.handleUsage))
+	mux.HandleFunc("GET /api/admin/access", a.requireAdmin(a.handleAccessLog))
+	mux.HandleFunc("GET /api/admin/providers/{id}/status", a.requireAdmin(a.handleProviderStatus))
 	mux.HandleFunc("GET /api/admin/settings", a.requireAdmin(a.handleGetSettings))
 	mux.HandleFunc("PUT /api/admin/settings", a.requireAdmin(a.handlePutSettings))
 
@@ -169,7 +180,7 @@ func main() {
 		println("vschat", version)
 		return
 	}
-	trustProxy = os.Getenv("VSCHAT_TRUST_PROXY") == "1"
+	proxyMode = strings.ToLower(env("VSCHAT_TRUST_PROXY", "auto"))
 	dataDir := env("VSCHAT_DATA", "data")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		log.Fatal(err)
@@ -182,7 +193,7 @@ func main() {
 	if err := store.SealKeys(); err != nil {
 		log.Fatal(err)
 	}
-	app := &App{store: store, limiter: &loginLimiter{fail: map[string][]time.Time{}}}
+	app := newApp(store)
 	if err := app.bootstrap(); err != nil {
 		log.Fatal(err)
 	}

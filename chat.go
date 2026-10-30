@@ -174,7 +174,9 @@ func (a *App) handleSend(w http.ResponseWriter, r *http.Request) {
 	own := p.OwnerID != 0
 	if u.TokenLimit > 0 && !own {
 		if used, _ := a.store.MonthTokens(u.ID); used >= u.TokenLimit {
-			writeErr(w, 429, "monthly token limit reached")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(429)
+			json.NewEncoder(w).Encode(map[string]any{"error": "monthly token limit reached", "code": "quota_exceeded", "reset_at": monthReset()})
 			return
 		}
 	}
@@ -315,7 +317,37 @@ loop:
 	if res.In+res.Out > 0 {
 		a.store.AddUsage(u.ID, res.In, res.Out, own)
 	}
+	if rate, ok := parseRate(res.Header); ok && !own {
+		a.rates.set(p.ID, rate)
+	}
+	detail := model
+	if res.In+res.Out > 0 {
+		detail += fmt.Sprintf(" · %s→%s", fmtTokens(res.In), fmtTokens(res.Out))
+	}
+	if own {
+		detail += " · own key"
+	}
+	if reply.Error != "" {
+		detail += " · " + truncate(reply.Error, 120)
+	}
+	a.logAccess(r, u.ID, u.Username, "chat", detail, streamErr == nil && !interrupted)
 	if !interrupted {
 		send(map[string]any{"type": "done", "message": reply})
 	}
+}
+
+// monthReset is when monthly usage starts over: the 1st of next month, server time.
+func monthReset() int64 {
+	t := time.Now()
+	return time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, t.Location()).Unix()
+}
+
+func fmtTokens(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fK", float64(n)/1e3)
+	}
+	return strconv.FormatInt(n, 10)
 }

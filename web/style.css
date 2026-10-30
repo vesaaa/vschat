@@ -410,6 +410,21 @@ kbd { font: 11px var(--mono); color: var(--muted); border: 1px solid var(--borde
 .setting.muted .switch span { cursor: not-allowed; }
 .notice.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
 .model-picks[data-users] label { font-family: var(--font); font-size: 13px; }
+.quota { max-width: 800px; margin: 0 auto 8px; display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-radius: 12px;
+  background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+.quota.out { background: var(--danger-soft); color: var(--danger); }
+.quota-bar { width: 64px; height: 5px; border-radius: 3px; background: color-mix(in srgb, currentColor 22%, transparent); overflow: hidden; flex: none; }
+.quota-bar i { display: block; height: 100%; background: currentColor; border-radius: 3px; }
+.table .sub, .sub { color: var(--muted); font-size: 12px; }
+.table .mono, .mono { font-family: var(--mono); font-size: 12px; }
+.table.log td { font-size: 13px; padding: 8px 10px; }
+.table tr.bad td { background: color-mix(in srgb, var(--danger) 5%, transparent); }
+.nowrap { white-space: nowrap; }
+.prov-rate { margin-top: 4px; font-size: 12px; color: var(--text-2); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.prov-rate .dot { color: var(--muted); }
+.link-btn { border: 0; background: none; padding: 0; color: var(--accent); font-size: 12px; cursor: pointer; }
+.link-btn:disabled { opacity: .5; }
+.err-text { color: var(--danger); }
 .empty-state { color: var(--muted); text-align: center; padding: 28px; font-size: 14px; }
 
 /* ---------- toasts ---------- */

@@ -29,7 +29,8 @@ type Result struct {
 	Reasoning string
 	Raw       string // provider-native turn to replay on the next request
 	In, Out   int64
-	Notice    string // e.g. refusal or truncation, shown under the answer
+	Notice    string      // e.g. refusal or truncation, shown under the answer
+	Header    http.Header // upstream response headers (rate limits)
 }
 
 type Sink struct {
@@ -145,10 +146,10 @@ func (p *Provider) streamOpenAI(ctx context.Context, model string, history []*Me
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return Result{}, upstreamError(resp)
+		return Result{Header: resp.Header}, upstreamError(resp)
 	}
 
-	var res Result
+	res := Result{Header: resp.Header}
 	var text, reasoning strings.Builder
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -287,6 +288,8 @@ func (p *Provider) streamAnthropic(ctx context.Context, model string, history []
 			option.WithJSONSet("fallbacks", "default"))
 	}
 
+	var httpResp *http.Response
+	opts = append(opts, option.WithResponseInto(&httpResp))
 	client := p.anthropicClient()
 	stream := client.Messages.NewStreaming(ctx, params, opts...)
 	defer stream.Close()
@@ -310,6 +313,9 @@ func (p *Provider) streamAnthropic(ctx context.Context, model string, history []
 		}
 	}
 	err := stream.Err()
+	if httpResp != nil {
+		res.Header = httpResp.Header
+	}
 	res.Content, res.Reasoning = text.String(), reasoning.String()
 	res.In = acc.Usage.InputTokens + acc.Usage.CacheReadInputTokens + acc.Usage.CacheCreationInputTokens
 	res.Out = acc.Usage.OutputTokens

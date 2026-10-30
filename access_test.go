@@ -23,7 +23,7 @@ func testApp(t *testing.T, secret string) *App {
 	}
 	st.box = newSealer(secret)
 	t.Cleanup(func() { st.db.Close() })
-	return &App{store: st, limiter: &loginLimiter{fail: map[string][]time.Time{}}}
+	return newApp(st)
 }
 
 func mustUser(t *testing.T, a *App, name string, admin bool) *User {
@@ -334,6 +334,9 @@ func TestCatalogPresets(t *testing.T) {
 		rec := httptest.NewRecorder()
 		a.routes().ServeHTTP(rec, req)
 		return rec
+	}
+	if rec := post(map[string]any{"preset": "deepseek", "name": "DS", "api_key": "k", "models": []string{"x"}, "enabled": true}); rec.Code != 200 {
+		t.Errorf("preset without kind: %d %s", rec.Code, rec.Body)
 	}
 	rec := post(map[string]any{"preset": "anthropic", "kind": "openai", "name": "Claude", "api_key": "k", "auto_models": true, "enabled": true})
 	var v providerView

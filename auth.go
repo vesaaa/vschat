@@ -89,6 +89,7 @@ func (a *App) requireUser(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		a.touch(u, r)
 		next(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
 	}
 }
@@ -129,21 +130,6 @@ func (l *loginLimiter) record(ip string) {
 	l.mu.Unlock()
 }
 
-// trustProxy is set when VSCHAT_TRUST_PROXY=1, i.e. VsChat sits behind a reverse
-// proxy that sets X-Forwarded-For. Otherwise the header is ignored (spoofable).
-var trustProxy bool
-
-func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); trustProxy && f != "" {
-		return strings.TrimSpace(strings.Split(f, ",")[0])
-	}
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return host
-}
-
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct{ Username, Password string }
 	if !readJSON(w, r, &req) {
@@ -154,12 +140,20 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, try later")
 		return
 	}
-	u, err := a.store.UserByName(strings.TrimSpace(req.Username))
+	name := strings.TrimSpace(req.Username)
+	u, err := a.store.UserByName(name)
 	if err != nil || u.Disabled || !checkPassword(u.PassHash, req.Password) {
 		a.limiter.record(ip)
+		var uid int64
+		if u != nil {
+			uid = u.ID
+		}
+		a.logAccess(r, uid, truncate(name, 64), "login_failed", "", false)
 		writeErr(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
+	a.logAccess(r, u.ID, u.Username, "login", "", true)
+	a.touch(u, r)
 	tok := randomToken(32)
 	if err := a.store.CreateSession(hashToken(tok), u.ID, sessionTTL); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -184,7 +178,7 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
 	used, _ := a.store.MonthTokens(u.ID)
-	writeJSON(w, map[string]any{"user": u, "month_tokens": used, "user_keys": a.keyMode()})
+	writeJSON(w, map[string]any{"user": u, "month_tokens": used, "reset_at": monthReset(), "user_keys": a.keyMode()})
 }
 
 func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
