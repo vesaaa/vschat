@@ -1,8 +1,8 @@
 # VsChat
 
-A small, self-hosted, multi-user AI chat. Plug in your keys for **ChatGPT, Claude, Gemini, Grok, DeepSeek, Qwen, Kimi or GLM** — or any OpenAI-compatible API — and give each person their own account and chat history.
+**English** | [简体中文](README.zh-CN.md)
 
-一个小巧的自托管多用户 AI 对话。选服务商、填 Key 即可使用 ChatGPT / Claude / Gemini / Grok / DeepSeek / 通义千问 / Kimi / 智谱 GLM（或任何 OpenAI 兼容接口），每个用户有自己的账号和对话记录。
+A small, self-hosted, multi-user AI chat. Plug in your keys for **ChatGPT, Claude, Gemini, Grok, DeepSeek, Qwen, Kimi or GLM** — or any OpenAI-compatible API — and give each person their own account and chat history.
 
 - **Tiny** — one Go binary + one SQLite file. ~25 MB image; uses a few MB of RAM idle and ~25 MB in use. No Node, no Python, no database server.
 - **Multi-user** — admin creates accounts; chats are private per user; monthly token quotas (with a default for new users), a warning bar at 80% and a clear stop at 100%; usage dashboard.
@@ -92,7 +92,7 @@ A provider added from the list **follows the built-in model list** by default, s
 - **Shared providers** (Admin → Providers) are visible to *everyone* or to *selected users* — e.g. a "Claude Opus" provider only for a few people. Add the same API several times to split models into groups.
 - **Personal providers** — *Admin → Settings → Users' own API keys*:
   - **Not allowed** (default) — users only see shared models.
-  - **Official providers only** — users pick OpenAI, Claude or DeepSeek and paste their own key; the API address is fixed to the official endpoint.
+  - **Official providers only** — users pick one of the built-in providers and paste their own key; the API address is fixed to the official endpoint.
   - **Allow custom API URLs** — users may also point at any public OpenAI-compatible or Anthropic endpoint (relays, OpenRouter, …).
 
   Users then get **My models** in their menu. Those providers are private to the user, show up as "Mine" in the model picker, and their tokens are tracked separately (not counted against the monthly limit). Switching to a stricter mode disables personal providers that no longer fit; they're kept and marked.
