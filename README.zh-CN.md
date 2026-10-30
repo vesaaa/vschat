@@ -98,32 +98,6 @@ services:
   开启后，用户菜单里会出现「我的模型」。个人服务只有本人能看到，在模型选择器里归到「我的」分组下，用量单独统计，不计入每月额度。从宽松改成严格时，不符合新规则的个人服务会保留，但会停用并标注出来。
 - 自定义地址模式下，个人服务默认不能访问 `localhost` 和内网地址，防止用户借服务器探测你的内网。如果确实要接内网的 Ollama 之类的服务，可以打开「允许个人服务访问内网地址」。
 
-## Cloudflare Tunnel（不需要 nginx）
-
-对外提供服务最简单的方式：由 `cloudflared` 主动连接 Cloudflare，再把请求转给 VsChat，服务器上不用开放任何端口。流式输出在 Tunnel 里可以正常工作，访客的真实 IP 和国家会自动识别。
-
-```yaml
-services:
-  vschat:
-    image: vsbox/vschat:latest
-    restart: unless-stopped
-    volumes: ["./data:/data"]
-    environment:
-      VSCHAT_ADMIN_PASSWORD: change-me
-      VSCHAT_SECRET: a-long-random-string-you-keep
-    # 不写 ports，只让 cloudflared 访问它
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: your-tunnel-token   # Zero Trust → Networks → Tunnels
-```
-
-在 Tunnel 的 *Public Hostname* 设置里，把你的域名指向 `http://vschat:8080`。如果 cloudflared 直接装在宿主机上，就把端口只绑定到本机（`127.0.0.1:8080:8080`），再指向 `http://localhost:8080`。
-
-静态文件已经预先 gzip 压缩，其余内容 Cloudflare 发给访客时会自动压缩。
-
 ## 经过 Cloudflare 或反向代理时的真实 IP
 
 VsChat 会在访问记录里记录访客 IP，登录失败次数限制也按 IP 计算。默认 `VSCHAT_TRUST_PROXY=auto` 时，依次读取 `CF-Connecting-IP`、`True-Client-IP`、`X-Forwarded-For` 的第一跳、`X-Real-IP`。但只有当请求来自 Cloudflare 节点、本机或内网时才相信这些请求头，所以直接访问端口的人无法伪造 IP。经过 Cloudflare 时还会记录访客所在国家（`CF-IPCountry`）。
@@ -149,6 +123,8 @@ location / {
 - 接口一律不缓存（`no-store`）。
 
 所以升级后，浏览器和 Cloudflare 下次加载时都会拿到新版本。
+
+静态文件已经预先做了 gzip 压缩。
 
 如果从公网访问，请使用 HTTPS。在 HTTPS 下，登录 Cookie 会自动加上 `Secure` 标记。
 
