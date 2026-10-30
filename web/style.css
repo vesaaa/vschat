@@ -102,7 +102,7 @@ kbd { font: 11px var(--mono); color: var(--muted); border: 1px solid var(--borde
 .logo { width: 28px; height: 28px; border-radius: 8px; background: url(favicon.svg) center/cover; flex: none; }
 .brand-lg { font-size: 24px; justify-content: center; }
 .brand-lg .logo { width: 40px; height: 40px; border-radius: 11px; }
-.logo-xl { width: 56px; height: 56px; border-radius: 16px; box-shadow: 0 10px 30px rgba(91, 91, 214, .3); }
+.logo-xl { width: 56px; height: 56px; border-radius: 16px; box-shadow: 0 10px 30px rgba(79, 70, 229, .28); }
 
 /* ---------- login ---------- */
 .login {
