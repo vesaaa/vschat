@@ -47,6 +47,7 @@ type ModelOption struct {
 	Kind     string `json:"kind"`
 	Own      bool   `json:"own"` // on the user's own key
 	Preset   string `json:"preset,omitempty"`
+	Default  bool   `json:"default,omitempty"` // the provider's mid-tier pick
 }
 
 func (a *App) modelOptions(u *User) []ModelOption {
@@ -56,8 +57,13 @@ func (a *App) modelOptions(u *User) []ModelOption {
 		if !a.canUse(u, p) || p.APIKey == "" {
 			continue
 		}
+		def := ""
+		if pr := presetByID(p.Preset); pr != nil {
+			def = pr.Default
+		}
 		for _, m := range p.Models {
-			out = append(out, ModelOption{ID: fmt.Sprintf("%d/%s", p.ID, m), Model: m, Provider: p.Name, Kind: p.Kind, Own: p.OwnerID != 0, Preset: p.Preset})
+			out = append(out, ModelOption{ID: fmt.Sprintf("%d/%s", p.ID, m), Model: m, Provider: p.Name, Kind: p.Kind,
+				Own: p.OwnerID != 0, Preset: p.Preset, Default: m == def})
 		}
 	}
 	return out

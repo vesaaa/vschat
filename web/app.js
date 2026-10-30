@@ -21,7 +21,7 @@ const I18N = {
     renameChat: '重命名对话', deleteChat: '删除这个对话？', deleteChatSub: '删除后无法恢复。',
     cancel: '取消', save: '保存', confirm: '确定', close: '关闭', back: '返回',
     theme: '主题', themeSystem: '系统', themeLight: '浅色', themeDark: '深色', language: '语言',
-    sourceCode: '源代码', changePassword: '修改密码', admin: '管理后台', logout: '退出登录',
+    changePassword: '修改密码', admin: '管理后台', logout: '退出登录',
     oldPassword: '当前密码', newPassword: '新密码', newPassword2: '确认新密码', pwMismatch: '两次输入的密码不一致',
     pwChanged: '密码已修改', monthUsage: '本月用量',
     users: '用户', providers: '模型服务', usage: '用量',
@@ -72,7 +72,7 @@ const I18N = {
     renameChat: 'Rename chat', deleteChat: 'Delete this chat?', deleteChatSub: 'This cannot be undone.',
     cancel: 'Cancel', save: 'Save', confirm: 'OK', close: 'Close', back: 'Back',
     theme: 'Theme', themeSystem: 'Auto', themeLight: 'Light', themeDark: 'Dark', language: 'Language',
-    sourceCode: 'Source code', changePassword: 'Change password', admin: 'Admin', logout: 'Sign out',
+    changePassword: 'Change password', admin: 'Admin', logout: 'Sign out',
     oldPassword: 'Current password', newPassword: 'New password', newPassword2: 'Confirm new password', pwMismatch: 'Passwords do not match',
     pwChanged: 'Password changed', monthUsage: 'This month',
     users: 'Users', providers: 'Providers', usage: 'Usage',
@@ -302,7 +302,7 @@ async function boot() {
   let me;
   try { me = await api('GET', '/me'); } catch { return; }
   S.me = me.user; S.monthTokens = me.month_tokens; S.resetAt = me.reset_at; S.userKeys = me.user_keys;
-  S.version = me.version; S.sourceURL = me.source_url;
+  S.version = me.version;
   $('#login').hidden = true;
   $('#app').hidden = false;
   $('#user-name').textContent = S.me.username;
@@ -315,7 +315,7 @@ async function boot() {
 /* ================= models ================= */
 async function loadModels() {
   S.models = await api('GET', '/models');
-  if (!modelById(S.model)) S.model = S.models[0]?.id || '';
+  if (!modelById(S.model)) S.model = (S.models.find(m => m.default) || S.models[0])?.id || '';
   renderModelLabel();
   renderQuota();
 }
@@ -877,11 +877,27 @@ document.addEventListener('keydown', e => {
 });
 
 /* ================= user menu ================= */
+// Monthly usage at the top of the user menu: a bar against the limit, or just
+// the count when there is none. Colours shift at 80% and 100%.
+function usageCard(limit) {
+  const used = S.monthTokens || 0;
+  if (!limit) {
+    return `<div class="usage-card"><div class="usage-row"><span>${esc(t('monthUsage'))}</span>
+      <span><strong>${fmtTokens(used)}</strong> tokens · ${esc(t('unlimited'))}</span></div></div>`;
+  }
+  const pct = Math.min(100, Math.round(used / limit * 100));
+  const level = pct >= 100 ? 'out' : pct >= 80 ? 'warn' : '';
+  return `<div class="usage-card ${level}">
+    <div class="usage-row"><span>${esc(t('monthUsage'))}</span><span class="usage-pct">${pct}%</span></div>
+    <div class="usage-bar"><i style="width:${Math.max(pct, 2)}%"></i></div>
+    <div class="usage-row sub"><span>${fmtTokens(used)} / ${fmtTokens(limit)} tokens</span><span>${esc(t('resetOn', fmtDate(S.resetAt)))}</span></div>
+  </div>`;
+}
 $('#user-btn').onclick = () => {
   const theme = store.get('theme', 'system');
   const limit = S.me.token_limit;
   const pop = openPopover($('#user-btn'), `
-    <div class="menu-label">${esc(t('monthUsage'))}: ${fmtTokens(S.monthTokens)}${limit ? ' / ' + fmtTokens(limit) : ''} tokens</div>
+    ${usageCard(limit)}
     <div class="menu-item">${icon('sun')}<span>${esc(t('theme'))}</span><span class="seg" data-seg="theme">
       ${['system', 'light', 'dark'].map(v => `<button data-v="${v}" class="${theme === v ? 'on' : ''}">${esc(t('theme' + v[0].toUpperCase() + v.slice(1)))}</button>`).join('')}</span></div>
     <div class="menu-item">${icon('globe')}<span>${esc(t('language'))}</span><span class="seg" data-seg="lang">
@@ -892,7 +908,7 @@ $('#user-btn').onclick = () => {
     ${S.me.is_admin ? `<button class="menu-item" data-act="admin">${icon('shield')}<span>${esc(t('admin'))}</span></button>` : ''}
     <div class="menu-sep"></div>
     <button class="menu-item danger" data-act="logout">${icon('logout')}<span>${esc(t('logout'))}</span></button>
-    <div class="menu-foot">VsChat ${esc(S.version || '')} · <a href="${esc(S.sourceURL)}" target="_blank" rel="noopener">${esc(t('sourceCode'))}</a> · AGPL-3.0</div>`, { minWidth: 252, above: true });
+    <div class="menu-foot">VsChat ${esc(S.version || '')}</div>`, { minWidth: 268, above: true });
   pop.onclick = async e => {
     const seg = e.target.closest('[data-seg] button');
     if (seg) {

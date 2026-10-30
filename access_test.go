@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -355,6 +356,9 @@ func TestCatalogPresets(t *testing.T) {
 	for _, pr := range catalog {
 		if !isOfficial(pr.Kind, pr.BaseURL) || len(pr.Models) == 0 || pr.KeyEnv == "" {
 			t.Errorf("catalog entry incomplete: %s", pr.ID)
+		}
+		if pr.Default != "" && !slices.Contains(pr.Models, pr.Default) {
+			t.Errorf("%s: default %q not in its model list", pr.ID, pr.Default)
 		}
 	}
 }

@@ -166,4 +166,4 @@ Requires Go 1.24+. The web UI is plain HTML/CSS/JS embedded in the binary — no
 
 Copyright (C) 2026 vesaaa
 
-VsChat is free software under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0), from v0.3.5 on. You may use, modify and redistribute it; if you run a modified version as a network service, you must offer its users the corresponding source code (AGPL §13 — the "Source code" link in the user menu is there for that; point it at your fork). Releases up to v0.3.4 were published under MIT.
+VsChat is free software under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0), from v0.3.5 on. You may use, modify and redistribute it; if you run a modified version as a network service, you must offer its users the corresponding source code (AGPL §13). Releases up to v0.3.4 were published under MIT.

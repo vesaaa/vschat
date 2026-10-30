@@ -179,7 +179,7 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
 	used, _ := a.store.MonthTokens(u.ID)
 	writeJSON(w, map[string]any{"user": u, "month_tokens": used, "reset_at": monthReset(), "user_keys": a.keyMode(),
-		"version": version, "source_url": sourceURL})
+		"version": version})
 }
 
 func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
