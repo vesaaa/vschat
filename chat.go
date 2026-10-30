@@ -330,6 +330,9 @@ loop:
 	if res.In+res.Out > 0 {
 		detail += fmt.Sprintf(" · %s→%s", fmtTokens(res.In), fmtTokens(res.Out))
 	}
+	if res.Cached > 0 {
+		detail += " · cache " + fmtTokens(res.Cached)
+	}
 	if own {
 		detail += " · own key"
 	}

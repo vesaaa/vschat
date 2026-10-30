@@ -31,6 +31,7 @@ type Result struct {
 	In, Out   int64
 	Notice    string      // e.g. refusal or truncation, shown under the answer
 	Header    http.Header // upstream response headers (rate limits)
+	Cached    int64       // input tokens served from the provider's prompt cache (part of In)
 }
 
 type Sink struct {
@@ -172,7 +173,11 @@ func (p *Provider) streamOpenAI(ctx context.Context, model string, history []*Me
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 			Usage *struct {
-				PromptTokens     int64 `json:"prompt_tokens"`
+				PromptTokens int64 `json:"prompt_tokens"`
+				CacheHit     int64 `json:"prompt_cache_hit_tokens"` // DeepSeek
+				Details      struct {
+					Cached int64 `json:"cached_tokens"` // OpenAI and most compatibles
+				} `json:"prompt_tokens_details"`
 				CompletionTokens int64 `json:"completion_tokens"`
 			} `json:"usage"`
 			Error *struct{ Message string } `json:"error"`
@@ -201,6 +206,7 @@ func (p *Provider) streamOpenAI(ctx context.Context, model string, history []*Me
 		}
 		if chunk.Usage != nil {
 			res.In, res.Out = chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens
+			res.Cached = max(chunk.Usage.CacheHit, chunk.Usage.Details.Cached)
 		}
 	}
 	if err == nil {
@@ -274,6 +280,10 @@ func (p *Provider) streamAnthropic(ctx context.Context, model string, history []
 		Model:     anthropic.Model(model),
 		MaxTokens: anthropicMaxTokens,
 		Messages:  msgs,
+		// Automatic prompt caching: the breakpoint moves to the newest message
+		// each turn, and because the history is replayed unchanged the next turn
+		// reads everything before it from cache. Default 5-minute TTL.
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
 	}
 	if adaptiveThinking(model) {
 		adaptive := anthropic.ThinkingConfigAdaptiveParam{Display: anthropic.ThinkingConfigAdaptiveDisplaySummarized}
@@ -318,6 +328,7 @@ func (p *Provider) streamAnthropic(ctx context.Context, model string, history []
 	}
 	res.Content, res.Reasoning = text.String(), reasoning.String()
 	res.In = acc.Usage.InputTokens + acc.Usage.CacheReadInputTokens + acc.Usage.CacheCreationInputTokens
+	res.Cached = acc.Usage.CacheReadInputTokens
 	res.Out = acc.Usage.OutputTokens
 
 	switch acc.StopReason {
