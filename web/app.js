@@ -21,7 +21,7 @@ const I18N = {
     renameChat: '重命名对话', deleteChat: '删除这个对话？', deleteChatSub: '删除后无法恢复。',
     cancel: '取消', save: '保存', confirm: '确定', close: '关闭', back: '返回',
     theme: '主题', themeSystem: '系统', themeLight: '浅色', themeDark: '深色', language: '语言',
-    changePassword: '修改密码', admin: '管理后台', logout: '退出登录',
+    sourceCode: '源代码', changePassword: '修改密码', admin: '管理后台', logout: '退出登录',
     oldPassword: '当前密码', newPassword: '新密码', newPassword2: '确认新密码', pwMismatch: '两次输入的密码不一致',
     pwChanged: '密码已修改', monthUsage: '本月用量',
     users: '用户', providers: '模型服务', usage: '用量',
@@ -72,7 +72,7 @@ const I18N = {
     renameChat: 'Rename chat', deleteChat: 'Delete this chat?', deleteChatSub: 'This cannot be undone.',
     cancel: 'Cancel', save: 'Save', confirm: 'OK', close: 'Close', back: 'Back',
     theme: 'Theme', themeSystem: 'Auto', themeLight: 'Light', themeDark: 'Dark', language: 'Language',
-    changePassword: 'Change password', admin: 'Admin', logout: 'Sign out',
+    sourceCode: 'Source code', changePassword: 'Change password', admin: 'Admin', logout: 'Sign out',
     oldPassword: 'Current password', newPassword: 'New password', newPassword2: 'Confirm new password', pwMismatch: 'Passwords do not match',
     pwChanged: 'Password changed', monthUsage: 'This month',
     users: 'Users', providers: 'Providers', usage: 'Usage',
@@ -302,6 +302,7 @@ async function boot() {
   let me;
   try { me = await api('GET', '/me'); } catch { return; }
   S.me = me.user; S.monthTokens = me.month_tokens; S.resetAt = me.reset_at; S.userKeys = me.user_keys;
+  S.version = me.version; S.sourceURL = me.source_url;
   $('#login').hidden = true;
   $('#app').hidden = false;
   $('#user-name').textContent = S.me.username;
@@ -890,7 +891,8 @@ $('#user-btn').onclick = () => {
     <button class="menu-item" data-act="password">${icon('key')}<span>${esc(t('changePassword'))}</span></button>
     ${S.me.is_admin ? `<button class="menu-item" data-act="admin">${icon('shield')}<span>${esc(t('admin'))}</span></button>` : ''}
     <div class="menu-sep"></div>
-    <button class="menu-item danger" data-act="logout">${icon('logout')}<span>${esc(t('logout'))}</span></button>`, { minWidth: 252, above: true });
+    <button class="menu-item danger" data-act="logout">${icon('logout')}<span>${esc(t('logout'))}</span></button>
+    <div class="menu-foot">VsChat ${esc(S.version || '')} · <a href="${esc(S.sourceURL)}" target="_blank" rel="noopener">${esc(t('sourceCode'))}</a> · AGPL-3.0</div>`, { minWidth: 252, above: true });
   pop.onclick = async e => {
     const seg = e.target.closest('[data-seg] button');
     if (seg) {

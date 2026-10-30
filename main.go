@@ -19,6 +19,10 @@ import (
 
 var version = "dev"
 
+// sourceURL is offered to every user (AGPL-3.0 §13). If you run a modified
+// version, point it at your own source.
+const sourceURL = "https://github.com/vesaaa/vschat"
+
 //go:embed web
 var webFS embed.FS
 
