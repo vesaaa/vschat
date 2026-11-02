@@ -25,7 +25,7 @@ func publicAddr(ip netip.Addr) bool {
 }
 
 var guardedClient = &http.Client{
-	Transport: &http.Transport{
+	Transport: scrubTransport{&http.Transport{
 		Proxy: nil, // a proxy would hide the real destination from the check
 		DialContext: (&net.Dialer{
 			Timeout:   15 * time.Second,
@@ -42,14 +42,14 @@ var guardedClient = &http.Client{
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 2 * time.Minute,
 		IdleConnTimeout:       90 * time.Second,
-	},
+	}},
 }
 
 func (p *Provider) httpClient() *http.Client {
 	if p.guard {
 		return guardedClient
 	}
-	return http.DefaultClient
+	return upstreamClient
 }
 
 func validBaseURL(s string) bool {
